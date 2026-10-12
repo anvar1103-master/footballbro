@@ -79,7 +79,7 @@ export function laneSafety(m: Match, team: number, from: Vector3, to: Vector3, l
     s = Math.max(0, Math.min(1, s));
     const dx = qx - lx * s, dz = qz - lz * s;
     const d = Math.hypot(dx, dz);
-    const margin = d - (0.8 + s * len * (lofted ? 0.1 : 0.22));
+    const margin = d - (0.9 + s * len * (lofted ? 0.1 : 0.5));
     if (margin < safety) safety = margin;
   }
   return safety;
@@ -163,7 +163,8 @@ export function shotAim(m: Match, p: Player, power: number, finesse: boolean, si
   let tz = side * (f.goalHalfW - inset);
   let ty = finesse ? 0.9 + 0.9 * power : 0.3 + 1.6 * Math.pow(power, 1.6);
   const pressure = Math.max(0, 3 - nearestOpponentDist(m, p.team, p.pos)) / 3;
-  const sigma = ((1.05 - p.stats.shot) * 0.9 + Math.pow(power, 3) * 0.55 + pressure * 0.4 + (finesse ? 0.15 : 0)) * Math.max(0.6, dist / 18);
+  let sigma = ((1.1 - p.stats.shot) * 1.3 + Math.pow(power, 3) * 0.75 + pressure * 0.6 + (finesse ? 0.2 : 0)) * Math.max(0.7, dist / 16);
+  if (m.controlled === p) sigma *= 0.75; // a little assist for the human
   tz += m.rng.gauss() * sigma * 0.75;
   ty += Math.abs(m.rng.gauss()) * sigma * 0.45 + (power > 0.88 ? (power - 0.88) * 9 : 0);
   ty = Math.max(BALL.radius + 0.05, ty);
@@ -427,9 +428,10 @@ function carrierAI(m: Match, p: Player, dt: number) {
     // --- shoot? ---
     const angleOpen = Math.abs(p.pos.z) / Math.max(1, Math.abs(gx - p.pos.x));
     const facingGoal = ((gx - p.pos.x) * p.face.x + -p.pos.z * p.face.z) / (distGoal || 1);
-    if (distGoal < 28 && angleOpen < 1.8 && facingGoal > -0.5) {
+    const range = Math.min(28, f.length * 0.32);
+    if (distGoal < range && angleOpen < 1.8 && facingGoal > -0.5) {
       const blockers = laneSafety(m, p.team, m.ball.pos, new Vector3(gx, 0, 0));
-      let q = (1 - distGoal / 30) * 1.6 - angleOpen * 0.3 + (blockers > 0 ? 0.3 : -0.05);
+      let q = (1 - distGoal / (range + 2)) * 1.6 - angleOpen * 0.3 + (blockers > 0 ? 0.3 : -0.05);
       if (distGoal < 16) q += 0.5;
       if (pressure < 2 && distGoal < 22) q += 0.3;
       if (m.rng.chance(Math.max(0, q) * (0.6 + skill * 0.5))) {
@@ -585,7 +587,7 @@ export function gkThink(m: Match, gk: Player, dt: number) {
       const reachTime = Math.max(0.12, tP);
       const difficulty = Math.abs(lateral) / (1.5 + reachTime * 5.5) + Math.max(0, P.y - 1.9) * 0.4;
       const corner = Math.abs(P.z) > f.goalHalfW - 0.8 && (P.y > 1.6 || P.y < 0.5) ? 0.15 : 0;
-      let pSave = skill * 1.1 - difficulty * 0.75 - Math.max(0, speed - 20) / 35 - corner;
+      let pSave = skill * 1.0 - difficulty * 0.9 - Math.max(0, speed - 18) / 30 - corner * 1.5;
       if (!shot.onTarget) pSave = 0.9;
       pSave = Math.max(0.04, Math.min(0.92, pSave));
       const saves = difficulty < 1.15 && m.rng.chance(pSave);

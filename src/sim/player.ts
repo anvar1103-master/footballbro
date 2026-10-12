@@ -11,9 +11,10 @@ export type Action =
   | 'fallen' // knocked down
   | 'dive' // goalkeeper dive
   | 'throw' // throw-in / GK throw
+  | 'header' // jumping header
   | 'celebrate';
 
-export type KickKind = 'shot' | 'finesse' | 'pass' | 'through' | 'lob' | 'cross' | 'clear' | 'throwin' | 'punt';
+export type KickKind = 'shot' | 'finesse' | 'pass' | 'through' | 'lob' | 'cross' | 'clear' | 'throwin' | 'punt' | 'header';
 
 export interface KickOrder {
   kind: KickKind;

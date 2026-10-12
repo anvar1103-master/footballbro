@@ -97,6 +97,7 @@ export class Match {
   firstKickoffTeam = 0;
   /** per-player cooldown before he can touch the ball again */
   touchCooldown = new Map<number, number>();
+  private headerTried = new Set<string>();
   prevInput: InputState = { ...EMPTY_INPUT };
   diff: (typeof DIFFICULTY)[Difficulty];
   /** last pass: who it is meant for and where */
@@ -345,6 +346,7 @@ export class Match {
     if (this.owner) return;
     const b = this.ball;
     if (b.held) return;
+    if (this.tryHeader()) return;
     let best: Player | null = null;
     let bestD = 1e9;
     for (const p of this.players) {
@@ -391,6 +393,79 @@ export class Match {
       this.deflect(p, isGK ? 0.35 : 0.3);
       if (isGK) this.emit({ type: 'save', pos: b.pos.clone(), team: p.team });
     }
+  }
+
+  /** Balls at head height get headed: at goal in the attacking box, cleared in defence, else flicked on. */
+  private tryHeader() {
+    const b = this.ball;
+    if (b.pos.y < 1.15 || b.pos.y > 2.7 || b.vel.lengthSq() < 16) return false;
+    let best: Player | null = null;
+    let bd = 0.9;
+    for (const p of this.players) {
+      if (p.busy || this.touchCooldown.has(p.id)) continue;
+      if (b.kickerId === p.id && this.time - b.kickTime < 0.5) continue;
+      if (p.role === 'GK' && this.inBox(p.team, p.pos, 0.5)) continue; // keepers use their hands
+      // headers only happen around the boxes: attackers at goal, defenders clearing
+      if (!this.inBox(1 - p.team, p.pos, 3) && !this.inBox(p.team, p.pos, 3)) continue;
+      const d = Math.hypot(b.pos.x - p.pos.x, b.pos.z - p.pos.z);
+      if (d < bd) {
+        bd = d;
+        best = p;
+      }
+    }
+    if (!best) return false;
+    const p = best;
+    // one contest roll per player per ball flight: the intended receiver wins most aerial duels
+    const key = `${p.id}@${b.kickTime.toFixed(3)}`;
+    if (this.headerTried.has(key)) return false;
+    this.headerTried.add(key);
+    if (this.headerTried.size > 200) this.headerTried.clear();
+    const receiver = this.pass?.to === p;
+    const chance = receiver ? 0.85 : p.team === b.lastTouchTeam ? 0.5 : 0.35;
+    if (!this.rng.chance(chance)) return false;
+    const f = this.field;
+    const gx = this.attackGoalX(p.team);
+    const dir = this.teams[p.team].attackDir;
+    p.setAction('header', 0.55);
+    p.face.set(b.pos.x - p.pos.x, 0, b.pos.z - p.pos.z).normalize();
+    if (p.face.lengthSq() < 0.5) p.face.set(dir, 0, 0);
+    const inAttack = Math.abs(p.pos.x - gx) < f.boxDepth + 3 && Math.abs(p.pos.z) < f.boxHalfW + 1;
+    const from = b.pos.clone();
+    let kind: KickKind = 'header';
+    if (inAttack) {
+      const gk = this.opp(p.team).players[0];
+      const side = Math.abs(gk.pos.z) > 0.4 ? -Math.sign(gk.pos.z) : this.rng.chance(0.5) ? 1 : -1;
+      const sigma = (1.1 - p.stats.shot) * 1.6 + 0.35;
+      const target = new Vector3(gx, Math.max(0.2, this.rng.range(0.25, 1.6) + this.rng.gauss() * sigma * 0.4), side * (f.goalHalfW - 0.8) + this.rng.gauss() * sigma);
+      const speed = Math.min(20, 11 + b.vel.length() * 0.35);
+      const sol = solveShot(f, from, target, speed, 0, -4);
+      b.vel.copy(sol.vel);
+      b.spin.copy(sol.spin);
+      kind = 'shot';
+    } else {
+      // clear / flick on towards the opponent half
+      const away = this.inBox(p.team, p.pos, 8);
+      const mate = away ? null : this.nearestOutfield(p.team, p.pos.clone().add(new Vector3(dir * 12, 0, 0)), p);
+      const to = mate ? mate.pos.clone().sub(p.pos).setY(0) : new Vector3(dir, 0, -Math.sign(p.pos.z || 1) * 0.6);
+      to.normalize();
+      const sp = away ? 13 : 9;
+      b.vel.set(to.x * sp, away ? 6 : 3.5, to.z * sp);
+      b.spin.set(0, 0, 0);
+      if (mate) {
+        mate.receiving = true;
+        this.pass = { from: p, to: mate, target: p.pos.clone().addScaledVector(to, 12), t: this.time };
+      }
+    }
+    b.lastTouchTeam = p.team;
+    b.lastTouchPlayer = p.id;
+    b.kickerId = p.id;
+    b.kickTime = this.time;
+    this.emit({ type: 'kick', pos: from, strength: b.vel.length(), team: p.team, kind: 'header' });
+    if (kind === 'shot') {
+      this.teams[p.team].shots++;
+      this.registerShot(p.team);
+    }
+    return true;
   }
 
   deflect(p: Player, keep: number) {
@@ -471,14 +546,17 @@ export class Match {
       case 'lob':
         sol = solveLob(f, from, o.target, 0.62, 22);
         break;
-      case 'cross':
-        sol = solveLob(f, from, o.target, 0.42, 18);
+      case 'cross': {
+        const beyond = o.target.clone().sub(from).setY(0).normalize().multiplyScalar(2.6);
+        sol = solveLob(f, from, o.target.clone().add(beyond), 0.4, 18);
         break;
+      }
       case 'clear':
       case 'punt':
         sol = solveLob(f, from, o.target, o.kind === 'punt' ? 0.62 : 0.5, 10);
         break;
       case 'throwin':
+      default:
         sol = solveLob(f, from, o.target, 0.35, 0);
         break;
     }

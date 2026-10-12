@@ -288,6 +288,12 @@ export class PlayerActor {
         if (k >= 1) this.inner.position.y = Math.max(0, lift);
         break;
       }
+      case 'header': {
+        if (this.current !== 'jump' || restart) this.play('jump', 0.05, true, 1.5);
+        const k = Math.min(1, v.actionT / 0.5);
+        this.inner.position.y = Math.sin(k * Math.PI) * 0.45;
+        break;
+      }
       case 'celebrate':
         this.play(Math.floor(v.actionT / 1.6) % 2 ? 'jump' : 'emote-yes', 0.2);
         break;
