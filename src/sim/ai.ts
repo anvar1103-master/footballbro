@@ -123,7 +123,7 @@ export function passOptions(m: Match, p: Player, dir: Vector3 | null, kinds: Kic
     for (const kind of kinds) {
       const target = q.pos.clone();
       if (kind === 'pass') {
-        if (dist > 38) continue;
+        if (dist > 45) continue;
         target.addScaledVector(q.vel, dist / 16);
       } else if (kind === 'lob') {
         if (dist < 14) continue;
@@ -217,6 +217,14 @@ export function aiTeam(m: Match, team: Team, dt: number) {
       }
       if (cover === m.controlled) cover = ranked[2]?.p ?? null;
       if (cover === chaser) cover = null;
+      // human asks for a second man to press
+      if (team.index === m.humanTeam && m.teammatePress && owner && owner.team !== team.index) {
+        const r = ranked.find((x) => x.p !== m.controlled);
+        if (r) {
+          chaser = r.p;
+          if (cover === chaser) cover = null;
+        }
+      }
     }
   }
 
@@ -437,6 +445,11 @@ function carrierAI(m: Match, p: Player, dt: number) {
       if (m.rng.chance(Math.max(0, q) * (0.6 + skill * 0.5))) {
         const gk = m.opp(p.team).players[0];
         const side = Math.abs(gk.pos.z) > 0.4 ? -Math.sign(gk.pos.z) : m.rng.chance(0.5) ? 1 : -1;
+        const gkOff = Math.abs(gk.pos.x - gx);
+        if (gkOff > 5 && distGoal < 22 && distGoal > 9 && m.rng.chance(0.25)) {
+          m.orderKick(p, 'chip', new Vector3(gx, 0, side * 1.5), 0.6);
+          return;
+        }
         const finesse = distGoal > 12 && m.rng.chance(0.55);
         const power = finesse ? m.rng.range(0.5, 0.85) : m.rng.range(0.55, 0.92);
         const { target, curl } = shotAim(m, p, power, finesse, side);

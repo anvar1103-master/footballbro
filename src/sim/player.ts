@@ -12,9 +12,10 @@ export type Action =
   | 'dive' // goalkeeper dive
   | 'throw' // throw-in / GK throw
   | 'header' // jumping header
+  | 'skill' // feint / sidestep with the ball
   | 'celebrate';
 
-export type KickKind = 'shot' | 'finesse' | 'pass' | 'through' | 'lob' | 'cross' | 'clear' | 'throwin' | 'punt' | 'header';
+export type KickKind = 'shot' | 'finesse' | 'pass' | 'through' | 'lob' | 'cross' | 'clear' | 'throwin' | 'punt' | 'header' | 'chip';
 
 export interface KickOrder {
   kind: KickKind;
@@ -56,8 +57,14 @@ export class Player {
   /** has ball in hands (GK / throw-in taker) */
   holding = false;
   holdT = 0;
-  /** human charge timer for shots */
+  /** human charge timer (shot / pass power) */
   charge = 0;
+  /** which button is being charged */
+  chargeKind: 'shot' | 'finesse' | 'chip' | 'pass' | 'through' | 'lob' | null = null;
+  /** 0..1, drains while sprinting */
+  stamina = 1;
+  /** containing (jockeying) the ball carrier: faces him, side-steps */
+  jockey = false;
   // AI scratch
   thinkT = 0;
   receiving = false;
@@ -91,9 +98,10 @@ export class Player {
   }
 
   maxSpeed(withBall: boolean) {
-    const base = this.sprint ? PLAYER.sprintSpeed : PLAYER.jogSpeed;
+    const tired = 0.78 + 0.22 * Math.min(1, this.stamina * 1.6);
+    const base = this.sprint ? PLAYER.jogSpeed + (PLAYER.sprintSpeed - PLAYER.jogSpeed) * tired : PLAYER.jogSpeed;
     const pace = 0.88 + 0.2 * this.stats.pace;
-    return base * pace * (withBall ? PLAYER.dribbleSpeedMul : 1);
+    return base * pace * (withBall ? PLAYER.dribbleSpeedMul : 1) * (this.jockey ? 0.7 : 1);
   }
 
   setAction(a: Action, dur: number) {
@@ -115,7 +123,11 @@ export class Player {
       tx = (d.x / dl) * max;
       tz = (d.z / dl) * max;
     }
-    if (this.action === 'slide' || this.action === 'dive') return; // driven by action
+    // stamina: sprinting drains, jogging/standing recovers
+    const sp = this.speed;
+    if (this.sprint && sp > PLAYER.jogSpeed * 0.9) this.stamina = Math.max(0, this.stamina - 0.055 * dt);
+    else this.stamina = Math.min(1, this.stamina + (sp < 2 ? 0.05 : 0.025) * dt);
+    if (this.action === 'slide' || this.action === 'dive' || this.action === 'skill') return; // driven by action
     const dvx = tx - this.vel.x;
     const dvz = tz - this.vel.z;
     const dvl = Math.hypot(dvx, dvz);
@@ -149,6 +161,7 @@ export class Player {
   /** animation hint consumed by the renderer */
   get anim(): string {
     if (this.holding && this.action === 'none') return 'hold';
+    if (this.action === 'skill') return 'run';
     if (this.action !== 'none') return this.action;
     const s = this.speed;
     if (s < 0.4) return 'idle';

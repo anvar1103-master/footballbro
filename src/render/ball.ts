@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { BALL } from '../sim/config';
 
 /** Visual ball is a little bigger than the physical one so it reads well next to chibi players. */
-export const BALL_VIS_SCALE = 1.3;
+export const BALL_VIS_SCALE = 1.6;
 
 /** Classic black & white ball: Voronoi of icosahedron (pentagons) + dodecahedron (hexagons) centres. */
 function ballTexture() {

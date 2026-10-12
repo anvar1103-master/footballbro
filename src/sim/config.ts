@@ -29,15 +29,15 @@ export const PLAYER = {
   jogSpeed: 5.6,
   sprintSpeed: 8.2,
   dribbleSpeedMul: 0.9,
-  accel: 22,
-  decel: 30,
+  accel: 13,
+  decel: 20,
   turnRate: 14,
   controlRadius: 0.95,
   gkControlRadius: 1.25,
   kickReach: 1.35,
   bodyRadius: 0.38,
-  /** visual scale applied to the Kenney mini character (0.55 m tall model -> ~1.8 m) */
-  modelScale: 3.25,
+  /** visual scale applied to the Kenney mini character (0.55 m tall chibi model -> ~1.45 m) */
+  modelScale: 2.65,
 };
 
 export interface FieldDims {
@@ -63,15 +63,15 @@ export function fieldFor(size: TeamSize): FieldDims {
   const base = {
     goalHalfW: 3.66,
     goalH: 2.44,
-    goalDepthTop: 1.0,
-    goalDepthBottom: 2.0,
+    goalDepthTop: 1.6,
+    goalDepthBottom: 2.4,
     boardMargin: 5,
   };
   if (size === 11)
-    return { ...base, length: 100, width: 64, boxDepth: 16.5, boxHalfW: 20.15, smallBoxDepth: 5.5, smallBoxHalfW: 9.16, penaltySpot: 11, centerRadius: 9.15 };
+    return { ...base, length: 105, width: 68, boxDepth: 16.5, boxHalfW: 20.15, smallBoxDepth: 5.5, smallBoxHalfW: 9.16, penaltySpot: 11, centerRadius: 9.15 };
   if (size === 7)
-    return { ...base, length: 74, width: 48, boxDepth: 13, boxHalfW: 15, smallBoxDepth: 5, smallBoxHalfW: 8, penaltySpot: 9, centerRadius: 7 };
-  return { ...base, length: 56, width: 36, boxDepth: 10, boxHalfW: 11, smallBoxDepth: 4, smallBoxHalfW: 6.5, penaltySpot: 7.5, centerRadius: 5.5 };
+    return { ...base, length: 78, width: 50, boxDepth: 13, boxHalfW: 15, smallBoxDepth: 5, smallBoxHalfW: 8, penaltySpot: 9, centerRadius: 7 };
+  return { ...base, length: 58, width: 38, boxDepth: 10, boxHalfW: 11, smallBoxDepth: 4, smallBoxHalfW: 6.5, penaltySpot: 7.5, centerRadius: 5.5 };
 }
 
 export type Difficulty = 'easy' | 'normal' | 'hard';

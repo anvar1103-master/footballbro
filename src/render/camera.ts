@@ -6,10 +6,12 @@ import { FieldDims } from '../sim/config';
  * Replay camera: cinematic angles around the goal.
  */
 
+/** TV-style presets: a high gantry camera on the near touchline that pans with play. */
 export const CAMERA_PRESETS = [
-  { name: 'Broadcast', height: 16, back: 25, fov: 38, lead: 0.35 },
-  { name: 'Close', height: 12, back: 19, fov: 42, lead: 0.3 },
-  { name: 'Wide', height: 30, back: 44, fov: 36, lead: 0.25 },
+  { id: 'tv', name: 'Трансляция', height: 30, back: 26, fov: 30, lead: 0.3, follow: 0.82 },
+  { id: 'tvclose', name: 'Трансляция (ближе)', height: 22, back: 17, fov: 31, lead: 0.3, follow: 0.88 },
+  { id: 'high', name: 'Высокая', height: 46, back: 18, fov: 32, lead: 0.25, follow: 0.85 },
+  { id: 'pro', name: 'Низкая', height: 13, back: 14, fov: 38, lead: 0.3, follow: 0.92 },
 ];
 
 export class CameraRig {
@@ -21,13 +23,19 @@ export class CameraRig {
   replayAngle = 0;
 
   constructor(public f: FieldDims, aspect: number) {
-    this.camera = new THREE.PerspectiveCamera(38, aspect, 0.5, 2000);
+    this.camera = new THREE.PerspectiveCamera(30, aspect, 0.5, 2000);
     this.camera.position.set(0, 20, 40);
     this.camera.lookAt(0, 0, 0);
   }
 
   cycle() {
     this.preset = (this.preset + 1) % CAMERA_PRESETS.length;
+    return CAMERA_PRESETS[this.preset].name;
+  }
+
+  setPreset(id: string) {
+    const i = CAMERA_PRESETS.findIndex((p) => p.id === id);
+    if (i >= 0) this.preset = i;
   }
 
   kick(amount: number) {
@@ -40,9 +48,9 @@ export class CameraRig {
     const f = this.f;
     const small = f.length < 80 ? 0.78 : 1;
     const lx = Math.max(-f.length / 2 + 8, Math.min(f.length / 2 - 8, focus.x + ballVel.x * pr.lead));
-    const lz = Math.max(-f.width / 2 + 4, Math.min(f.width / 2 - 2, focus.z * 0.75));
+    const lz = Math.max(-f.width / 2 + 6, Math.min(f.width / 2 - 6, focus.z * 0.7));
     const wantLook = new THREE.Vector3(lx, 0, lz);
-    const wantPos = new THREE.Vector3(lx * 0.92, pr.height * small, f.width / 2 + pr.back * small + lz * 0.25);
+    const wantPos = new THREE.Vector3(lx * pr.follow, pr.height * small, f.width / 2 + pr.back * small + lz * 0.15);
     const k = snap ? 1 : 1 - Math.exp(-dt * 3.2);
     const kp = snap ? 1 : 1 - Math.exp(-dt * 2.4);
     this.look.lerp(wantLook, k);

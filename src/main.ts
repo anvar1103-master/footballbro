@@ -11,6 +11,7 @@ import { EMPTY_INPUT, GameEvent, Match } from './sim/match';
 import { Hud } from './ui/hud';
 import { MenuResult, showMenu } from './ui/menu';
 import { TEAM_PRESETS } from './sim/team';
+import { settings, Quality, bindingLabel } from './settings';
 
 const gameEl = document.getElementById('game')!;
 const uiEl = document.getElementById('ui')!;
@@ -58,7 +59,8 @@ class Session {
       humanTeam: opts.watch ? -1 : 0,
       teams: [opts.home, opts.away],
     });
-    this.gfx = new GameRenderer(gameEl, this.match, new URLSearchParams(location.search).has('lq'));
+    this.gfx = new GameRenderer(gameEl, this.match, ((new URLSearchParams(location.search).get('q') as Quality | null) ?? (new URLSearchParams(location.search).has('lq') ? 'low' : settings.quality)));
+    this.gfx.rig.setPreset(settings.camera);
     this.hud = new Hud(uiEl, this.match);
     this.hud.showBanner('KICK OFF', `${opts.home.name} vs ${opts.away.name}`, 2.2);
     this.loop = this.loop.bind(this);
@@ -106,7 +108,7 @@ class Session {
           if (e.text && SET_PIECE_NAMES[e.text]) this.hud.showToast(SET_PIECE_NAMES[e.text]);
           break;
         case 'kickoff':
-          if (e.team === m.humanTeam) this.hud.showToast('K — разыграть мяч', 2.5);
+          if (e.team === m.humanTeam) this.hud.showToast(`${bindingLabel('pass')} — разыграть мяч`, 2.5);
           break;
         case 'goal': {
           sound.crowdReact('goal');
@@ -133,12 +135,12 @@ class Session {
     const pad = input.padPresses;
     for (const k of presses) {
       if (k === 'Escape' || k === 'KeyP') this.togglePause();
-      if (k === 'KeyC') this.gfx.rig.cycle();
+      if (k === 'KeyV') this.hud.showToast('Камера: ' + this.gfx.rig.cycle());
       if (k === 'KeyM') sound.setMuted(!sound.muted);
     }
     if (pad.includes(9)) this.togglePause();
     if (pad.includes(8)) this.gfx.rig.cycle();
-    if (this.replay && (presses.some((k) => ['KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyO', 'Space', 'Enter'].includes(k)) || pad.some((b) => b <= 3))) {
+    if (this.replay && (presses.some((k) => k === 'Enter' || (['pass', 'shoot', 'through', 'lob', 'switch'] as const).some((a) => settings.bindings[a].includes(k))) || pad.some((b) => b <= 3))) {
       this.endReplay();
     }
   }
@@ -183,7 +185,7 @@ class Session {
     const m = this.match;
 
     if (this.paused) {
-      if (this.lastFrame) this.gfx.renderer.render(this.gfx.scene, this.gfx.rig.camera);
+      if (this.lastFrame) this.gfx.render();
       return;
     }
 
@@ -210,25 +212,26 @@ class Session {
     const frame = captureFrame(m);
     this.buffer.push(frame);
     this.lastFrame = frame;
-    if (this.debugGoalCam !== 0) this.gfx.draw(frame, dt, { replay: true, controlledId: -1, goalX: (this.debugGoalCam * m.field.length) / 2 });
-    else this.gfx.draw(frame, dt, { replay: false, controlledId: m.controlled?.id ?? -1 });
+    if (this.debugGoalCam !== 0) this.gfx.draw(frame, dt, { replay: true, controlledId: -1, snap: true, goalX: (this.debugGoalCam * m.field.length) / 2 });
+    else this.gfx.draw(frame, dt, { replay: false, controlledId: m.controlled?.id ?? -1, switchId: m.switchTarget?.id ?? -1 });
 
     // crowd excitement: ball near a goal
     const dGoal = m.field.length / 2 - Math.abs(m.ball.pos.x);
     sound.setExcitement(Math.max(0, 1 - dGoal / 25), dt);
 
-    // power bar above the controlled player
+    // name, stamina and power bar above the controlled player
     const c = m.controlled;
-    if (c && c.charge > 0) {
-      const s = this.gfx.project(new THREE.Vector3(c.pos.x, 2.4, c.pos.z));
-      this.hud.setPower(s.x, s.y - 30, chargeLevel(c), inp.finesse);
-    } else this.hud.setPower(0, 0, 0, false);
+    if (c && m.humanTeam >= 0) {
+      const s = this.gfx.project(new THREE.Vector3(c.pos.x, 2.3, c.pos.z));
+      this.hud.setPlayerTag(s.x, s.y, s.visible, `${c.number} ${c.name}`, c.stamina, chargeLevel(c), c.chargeKind);
+    } else this.hud.setPlayerTag(0, 0, false, '', 1, 0, null);
     this.hud.update(dt);
 
     const sp = m.setPiece;
     if (sp && sp.ready && sp.taker === m.controlled && !this.hintShown && sp.kind !== 'kickoff') {
       this.hintShown = true;
-      const hint = sp.kind === 'throwin' ? 'K — короткий аут · O — длинный' : sp.kind === 'corner' ? 'O — навес · K — короткий' : 'K пас · O навес · J/I удар';
+      const P = bindingLabel('pass'), L = bindingLabel('lob'), S = bindingLabel('shoot'), F = bindingLabel('finesse');
+      const hint = sp.kind === 'throwin' ? `${P} — короткий аут · ${L} — длинный` : sp.kind === 'corner' ? `${L} — навес · ${P} — короткий` : `${P} пас · ${L} навес · ${S} удар · ${F} крученый`;
       this.hud.showToast(hint, 3);
     }
     if (!sp) this.hintShown = false;
