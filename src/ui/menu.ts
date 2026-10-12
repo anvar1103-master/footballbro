@@ -65,14 +65,14 @@ export function showMenu(root: HTMLElement, onStart: (r: MenuResult) => void) {
           <div style="margin-top:10px"><button class="btn" id="watch">Смотреть ИИ vs ИИ</button></div>
         </div>
         <div class="controls">
-          <div><b>WASD</b> бег · <b>Shift</b> спринт</div>
-          <div><b>K</b> пас · <b>L</b> пас на ход · <b>O</b> навес</div>
-          <div><b>J</b> удар (держать = сила)</div>
+          <div><b>WASD / стрелки</b> бег, <b>Shift</b> спринт</div>
+          <div><b>K</b> пас, <b>L</b> пас на ход, <b>O</b> навес</div>
+          <div><b>J</b> удар (держи — сильнее)</div>
           <div><b>I</b> крученый удар (finesse)</div>
-          <div><b>K</b> без мяча — прессинг/отбор</div>
-          <div><b>J</b> без мяча — подкат · <b>Space</b> смена</div>
-          <div><b>C</b> камера · <b>M</b> звук · <b>Esc</b> пауза</div>
-          <div><b>Геймпад:</b> A пас · B удар · RB+B finesse</div>
+          <div><b>K</b> без мяча — прессинг и отбор</div>
+          <div><b>J</b> без мяча — подкат, <b>Space</b> смена</div>
+          <div><b>C</b> камера, <b>M</b> звук, <b>Esc</b> пауза</div>
+          <div><b>Геймпад</b>: A пас, B удар, RB+B крученый</div>
         </div>
         <div class="credits">Персонажи: Kenney Mini Characters (CC0) · Звуки и стадион — процедурные</div>
       </div>`;

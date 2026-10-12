@@ -45,6 +45,9 @@ class Session {
   replayCount = 0;
   /** debug: render live play with the goal camera (?cam=goal) — used by screenshot scripts */
   debugGoalCam = 0;
+  hintShown = false;
+  /** debug: simulation speed multiplier (?speed=4) */
+  timeScale = Number(new URLSearchParams(location.search).get('speed') ?? 1);
 
   constructor(public opts: MenuResult) {
     this.match = new Match({
@@ -93,13 +96,16 @@ class Session {
           this.hud.showToast('СЕЙВ!');
           break;
         case 'catch':
-          if ((m.ball.vel.length() > 0 || true) && e.team !== undefined) this.hud.showToast('ВРАТАРЬ ЛОВИТ');
+          this.hud.showToast('ВРАТАРЬ ЛОВИТ');
           break;
         case 'foul':
           this.hud.showToast('ФОЛ!');
           break;
         case 'setpiece':
           if (e.text && SET_PIECE_NAMES[e.text]) this.hud.showToast(SET_PIECE_NAMES[e.text]);
+          break;
+        case 'kickoff':
+          if (e.team === m.humanTeam) this.hud.showToast('K — разыграть мяч', 2.5);
           break;
         case 'goal': {
           sound.crowdReact('goal');
@@ -115,8 +121,6 @@ class Session {
           break;
         case 'fulltime':
           sound.crowdReact('cheer');
-          break;
-        case 'kickoff':
           break;
       }
     }
@@ -185,7 +189,7 @@ class Session {
     if (this.replay) {
       const r = this.replay;
       const first = r.t === 0;
-      r.t += dt * REPLAY_SPEED;
+      r.t += dt * REPLAY_SPEED * this.timeScale;
       const frame = this.buffer.at(r.start + r.t);
       if (frame) this.gfx.draw(frame, dt * REPLAY_SPEED, { replay: true, controlledId: -1, snap: first, goalX: r.goalX });
       if (r.start + r.t >= r.end) this.endReplay();
@@ -193,7 +197,7 @@ class Session {
     }
 
     const inp = m.humanTeam >= 0 ? input.read() : (input.read(), EMPTY_INPUT);
-    this.acc += dt;
+    this.acc += dt * this.timeScale;
     while (this.acc >= SIM_DT) {
       m.step(SIM_DT, inp);
       if (m.events.length) {
@@ -220,6 +224,13 @@ class Session {
     } else this.hud.setPower(0, 0, 0, false);
     this.hud.update(dt);
 
+    const sp = m.setPiece;
+    if (sp && sp.ready && sp.taker === m.controlled && !this.hintShown && sp.kind !== 'kickoff') {
+      this.hintShown = true;
+      const hint = sp.kind === 'throwin' ? 'K — короткий аут · O — длинный' : sp.kind === 'corner' ? 'O — навес · K — короткий' : 'K пас · O навес · J/I удар';
+      this.hud.showToast(hint, 3);
+    }
+    if (!sp) this.hintShown = false;
     if (this.pendingReplay && m.time >= this.pendingReplay.at) this.startReplay();
     if (m.phase === 'fulltime' && !this.fullTimeShown && m.phaseT > 1.5) {
       this.fullTimeShown = true;

@@ -14,20 +14,20 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1b2a; fon
 #ui .interactive, #ui button, #ui select { pointer-events: auto; }
 
 /* ---------- menu ---------- */
-.menu { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: auto;
+.menu { position: absolute; inset: 0; display: flex; align-items: safe center; justify-content: center; pointer-events: auto;
   background: radial-gradient(ellipse at 50% 30%, #3fb950 0%, #1f7a3a 45%, #0d3b1f 100%); overflow: auto; }
 .menu::before { content: ''; position: absolute; inset: 0; opacity: 0.12;
   background: repeating-linear-gradient(90deg, #fff 0 60px, transparent 60px 120px); pointer-events: none; }
-.menu-card { position: relative; width: min(920px, 94vw); padding: 28px 32px 26px; }
-.logo { font-family: var(--font-title); font-size: clamp(54px, 10vw, 112px); line-height: 0.9; text-align: center; letter-spacing: 2px;
+.menu-card { position: relative; width: min(920px, 94vw); padding: 18px 24px 16px; margin: auto; }
+.logo { font-family: var(--font-title); font-size: clamp(48px, min(10vw, 12vh), 104px); line-height: 0.9; text-align: center; letter-spacing: 2px;
   color: #fff; text-shadow: 0 6px 0 #0b3d1d, 0 10px 24px rgba(0,0,0,0.45); transform: rotate(-3deg); margin-bottom: 8px; }
 .logo span { color: var(--accent); }
 .tagline { text-align: center; font-weight: 800; opacity: 0.9; margin-bottom: 22px; letter-spacing: 1px; }
 .teams { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: center; margin-bottom: 18px; }
-.team-pick { background: var(--panel); border-radius: 18px; padding: 14px; text-align: center; border: 3px solid rgba(255,255,255,0.12); }
+.team-pick { background: var(--panel); border-radius: 18px; padding: 10px 14px; text-align: center; border: 3px solid rgba(255,255,255,0.12); }
 .team-pick .label { font-size: 12px; text-transform: uppercase; letter-spacing: 2px; opacity: 0.7; }
-.team-pick .name { font-family: var(--font-title); font-size: 26px; margin: 6px 0 10px; }
-.kit { width: 74px; height: 80px; margin: 0 auto 10px; position: relative; }
+.team-pick .name { font-family: var(--font-title); font-size: 24px; margin: 4px 0 8px; }
+.kit { width: 74px; height: 72px; margin: 0 auto 8px; position: relative; }
 .kit .shirt { position: absolute; left: 10px; top: 0; width: 54px; height: 46px; border-radius: 10px 10px 6px 6px; border: 3px solid rgba(0,0,0,0.25); }
 .kit .sleeve { position: absolute; top: 4px; width: 16px; height: 24px; border-radius: 6px; border: 3px solid rgba(0,0,0,0.25); }
 .kit .shorts { position: absolute; left: 16px; top: 46px; width: 42px; height: 22px; border-radius: 4px 4px 8px 8px; border: 3px solid rgba(0,0,0,0.25); }
@@ -47,7 +47,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1b2a; fon
 .seg button.on { background: var(--accent); color: var(--ink); }
 .start-row { text-align: center; margin: 6px 0 14px; }
 .controls { background: var(--panel); border-radius: 14px; padding: 12px 16px; font-size: 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 18px; }
-.controls b { display: inline-block; min-width: 64px; color: var(--accent); }
+.controls b { color: var(--accent); }
 .credits { text-align: center; font-size: 12px; opacity: 0.65; margin-top: 10px; }
 
 /* ---------- HUD ---------- */
