@@ -10,6 +10,7 @@ import { chargeLevel } from './sim/human';
 import { EMPTY_INPUT, GameEvent, Match } from './sim/match';
 import { Hud } from './ui/hud';
 import { MenuResult, showMenu } from './ui/menu';
+import { TEAM_PRESETS } from './sim/team';
 
 const gameEl = document.getElementById('game')!;
 const uiEl = document.getElementById('ui')!;
@@ -274,8 +275,8 @@ async function boot() {
   const params = new URLSearchParams(location.search);
   if (params.has('autostart') || params.has('watch')) {
     start({
-      home: (await import('./sim/team')).TEAM_PRESETS[0],
-      away: (await import('./sim/team')).TEAM_PRESETS[1],
+      home: TEAM_PRESETS[0],
+      away: TEAM_PRESETS[1],
       teamSize: Number(params.get('size') ?? 11) as 5 | 7 | 11,
       halfLength: Number(params.get('half') ?? 150),
       difficulty: 'normal',

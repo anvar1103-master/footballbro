@@ -109,7 +109,7 @@ export async function loadCharacters(onProgress?: (f: number) => void) {
   let done = 0;
   await Promise.all(
     CHARACTER_MODELS.map(async (name) => {
-      const gltf = await loader.loadAsync(base + name + '.glb');
+      const gltf = await loader.loadAsync(base + name + (import.meta.env.VITE_MODEL_EXT ?? '.glb'));
       const clips = new Map<string, THREE.AnimationClip>();
       for (const c of gltf.animations) clips.set(c.name, c);
       gltf.scene.traverse((o) => {
