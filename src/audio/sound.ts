@@ -21,7 +21,7 @@ export class Sound {
     const ctx = new Ctx();
     this.ctx = ctx;
     this.master = ctx.createGain();
-    this.master.gain.value = 0.7;
+    this.master.gain.value = this.muted ? 0 : this.volume;
     this.master.connect(ctx.destination);
     // 2 s of noise reused everywhere
     const len = ctx.sampleRate * 2;
@@ -47,9 +47,16 @@ export class Sound {
     src.start();
   }
 
+  volume = 0.7;
+
   setMuted(m: boolean) {
     this.muted = m;
-    if (this.master) this.master.gain.value = m ? 0 : 0.7;
+    if (this.master) this.master.gain.value = m ? 0 : this.volume;
+  }
+
+  setVolume(v: number) {
+    this.volume = v;
+    if (this.master && !this.muted) this.master.gain.value = v;
   }
 
   /** 0..1 how dangerous the play is (ball near goal) */

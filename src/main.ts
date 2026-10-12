@@ -10,6 +10,7 @@ import { chargeLevel } from './sim/human';
 import { EMPTY_INPUT, GameEvent, Match } from './sim/match';
 import { Hud } from './ui/hud';
 import { MenuResult, showMenu } from './ui/menu';
+import { showSettings } from './ui/settingsPanel';
 import { TEAM_PRESETS } from './sim/team';
 import { settings, Quality, bindingLabel } from './settings';
 
@@ -153,6 +154,13 @@ class Session {
         () => this.togglePause(),
         () => restart(this.opts),
         () => backToMenu(),
+        () => {
+          this.hud.closeOverlay();
+          openSettings(() => {
+            this.paused = false;
+            this.togglePause();
+          }, this);
+        },
       );
     else this.hud.closeOverlay();
   }
@@ -248,7 +256,17 @@ class Session {
 
 let session: Session | null = null;
 
+function openSettings(done: () => void, s: Session | null = null) {
+  showSettings(uiEl, {
+    capture: (h) => (input.captureHook = h),
+    onCamera: (id) => s?.gfx.rig.setPreset(id),
+    onVolume: (v) => sound.setVolume(v),
+    onClose: done,
+  });
+}
+
 function start(opts: MenuResult) {
+  sound.volume = settings.volume;
   sound.start();
   session?.dispose();
   session = new Session(opts);
@@ -259,7 +277,7 @@ function restart(opts: MenuResult) {
 function backToMenu() {
   session?.dispose();
   session = null;
-  showMenu(uiEl, start);
+  showMenu(uiEl, start, (done) => openSettings(done));
 }
 
 async function boot() {
@@ -285,6 +303,6 @@ async function boot() {
       difficulty: 'normal',
       watch: params.has('watch'),
     });
-  } else showMenu(uiEl, start);
+  } else showMenu(uiEl, start, (done) => openSettings(done));
 }
 boot();

@@ -159,15 +159,16 @@ export class Hud {
     g.fill();
   }
 
-  showPause(onResume: () => void, onRestart: () => void, onMenu: () => void) {
+  showPause(onResume: () => void, onRestart: () => void, onMenu: () => void, onSettings: () => void) {
     this.closeOverlay();
     const o = document.createElement('div');
     o.className = 'overlay';
     o.innerHTML = `<div class="panel"><h2>Пауза</h2>
       <div class="row"><button class="btn big" data-a="resume">Продолжить</button></div>
-      <div class="row" style="margin-top:12px"><button class="btn" data-a="restart">Заново</button><button class="btn" data-a="menu">В меню</button></div></div>`;
+      <div class="row" style="margin-top:12px"><button class="btn" data-a="settings">Настройки</button><button class="btn" data-a="restart">Заново</button><button class="btn" data-a="menu">В меню</button></div></div>`;
     o.addEventListener('click', (e) => {
       const a = (e.target as HTMLElement).dataset.a;
+      if (a === 'settings') onSettings();
       if (a === 'resume') onResume();
       if (a === 'restart') onRestart();
       if (a === 'menu') onMenu();

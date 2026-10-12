@@ -100,3 +100,19 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1b2a; fon
   .vs { text-align: center; }
   .hint { display: none; }
 }
+
+/* ---------- settings ---------- */
+.overlay.settings { z-index: 5; overflow: auto; align-items: safe center; padding-block: 16px; }
+.overlay .panel.wide { width: min(760px, 94vw); text-align: left; }
+.overlay .panel.wide h2 { text-align: center; }
+.set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.binds { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 6px 16px; margin: 12px 0 6px; }
+.bind-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; min-width: 0; }
+.bind-row span { min-width: 0; }
+.bind { flex: none; min-width: 96px; font-family: var(--font-body); font-weight: 800; border: 2px solid rgba(255,255,255,0.25); border-radius: 8px; padding: 5px 10px;
+  background: rgba(255,255,255,0.08); color: #fff; cursor: pointer; }
+.bind:hover { border-color: var(--accent); }
+.bind.wait { background: var(--accent); color: var(--ink); }
+.note { font-size: 12px; opacity: 0.7; margin-top: 6px; }
+.opt input[type=range] { width: 100%; accent-color: var(--accent); }
+.start-row .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
