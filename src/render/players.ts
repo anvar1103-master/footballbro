@@ -109,9 +109,12 @@ export async function loadCharacters(onProgress?: (f: number) => void) {
   let done = 0;
   await Promise.all(
     CHARACTER_MODELS.map(async (name) => {
-      // single-file builds embed the models as glTF JSON strings in window.__FB_MODELS
+      // single-file builds embed texture-less GLBs as base64 in window.__FB_MODELS (no fetch needed)
       const inline = (window as unknown as { __FB_MODELS?: Record<string, string> }).__FB_MODELS?.[name];
-      const gltf = inline ? await loader.parseAsync(inline, '') : await loader.loadAsync(base + name + (import.meta.env.VITE_MODEL_EXT ?? '.glb'));
+      const gltf = inline
+        ? await loader.parseAsync(Uint8Array.from(atob(inline), (c) => c.charCodeAt(0)).buffer, '')
+        : await loader.loadAsync(base + name + (import.meta.env.VITE_MODEL_EXT ?? '.glb'));
+      if (inline) await applyInlinePalette(gltf);
       const clips = new Map<string, THREE.AnimationClip>();
       for (const c of gltf.animations) clips.set(c.name, c);
       gltf.scene.traverse((o) => {
@@ -130,6 +133,35 @@ export async function loadCharacters(onProgress?: (f: number) => void) {
   const anyMesh = findMesh(assets.get(CHARACTER_MODELS[0])!.gltf.scene);
   const map = (anyMesh?.material as THREE.MeshStandardMaterial).map;
   paletteImage = (map?.image as HTMLImageElement) ?? null;
+}
+
+let inlinePalette: Promise<THREE.Texture> | null = null;
+/** Single-file build: palette PNG comes as a data: URI and is assigned to every material. */
+function applyInlinePalette(gltf: GLTF) {
+  const src = (window as unknown as { __FB_PALETTE?: string }).__FB_PALETTE!;
+  inlinePalette ??= new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const t = new THREE.Texture(img);
+      t.flipY = false;
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.magFilter = THREE.NearestFilter;
+      t.needsUpdate = true;
+      res(t);
+    };
+    img.onerror = rej;
+    img.src = src;
+  });
+  return inlinePalette.then((t) => {
+    gltf.scene.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+      if (m) {
+        m.map = t;
+        m.color.set(0xffffff);
+        m.needsUpdate = true;
+      }
+    });
+  });
 }
 
 function findMesh(root: THREE.Object3D) {
