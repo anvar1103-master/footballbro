@@ -20,9 +20,9 @@ export const BALL = {
   rollLin: 0.075,
   postRadius: 0.06,
   postRestitution: 0.72,
-  /** soft goal-net spring/damping (critically damped ~0.6m bulge at 30 m/s) */
-  netK: 180,
-  netC: 28,
+  /** soft goal-net spring/damping (critically damped: ~0.7 m bulge at 18 m/s, ~1.1 m at 30 m/s) */
+  netK: 90,
+  netC: 19,
 };
 
 export const PLAYER = {
