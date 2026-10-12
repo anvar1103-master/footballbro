@@ -12,6 +12,7 @@ The user writes in Russian — answer in Russian. UI strings are Russian.
 - `npm run sim -- [matches] [size] [halfSec] [seed]` — **headless AI-vs-AI match runner** (`scripts/simulate.ts`): goals, shots, pass completion, ball-x histogram, stalls, NaN. Run it after any change in `src/sim/`. Healthy (11v11, 120 s halves): ~1–3 goals, ~10 shots, pass completion ≥55%, 0 stalls, 0 NaN.
 - `npm run shots` — Playwright screenshots (`scripts/screenshot.ts`, needs dev server running; Chromium at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, swiftshader is slow ≈2 fps → use `&lq`, `&speed`).
 - `npm run build` — typecheck + production build to `dist/` (relative base `./`).
+- `npx vite build --outDir .scratch/single-build && python3 -I scripts/build-single.py .scratch/single-build <out.html>` — ONE self-contained HTML (models inlined via window.__FB_MODELS); this is what is published to the artifact.
 - `scripts/build-artifact.sh <outDir>` — bundle for claude.ai artifact hosting (.glb not served there → models converted to `*.gltf.json` via `scripts/glb2gltf.py`, `VITE_MODEL_EXT` env). Published playable build: https://claude.ai/artifact/1pQLJehMiRup8dydP6x37b (republish with Artifact tool, url=that link, files map of outDir).
 - `.github/workflows/pages.yml` deploys `dist/` to GitHub Pages on push to main (user must enable Pages → Source: GitHub Actions).
 - `.scratch/` is gitignored — put throwaway debug scripts there (run with `npx tsx .scratch/x.ts`).

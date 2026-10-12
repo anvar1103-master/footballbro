@@ -109,7 +109,9 @@ export async function loadCharacters(onProgress?: (f: number) => void) {
   let done = 0;
   await Promise.all(
     CHARACTER_MODELS.map(async (name) => {
-      const gltf = await loader.loadAsync(base + name + (import.meta.env.VITE_MODEL_EXT ?? '.glb'));
+      // single-file builds embed the models as glTF JSON strings in window.__FB_MODELS
+      const inline = (window as unknown as { __FB_MODELS?: Record<string, string> }).__FB_MODELS?.[name];
+      const gltf = inline ? await loader.parseAsync(inline, '') : await loader.loadAsync(base + name + (import.meta.env.VITE_MODEL_EXT ?? '.glb'));
       const clips = new Map<string, THREE.AnimationClip>();
       for (const c of gltf.animations) clips.set(c.name, c);
       gltf.scene.traverse((o) => {
