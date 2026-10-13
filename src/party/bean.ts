@@ -79,7 +79,12 @@ function std(color: THREE.ColorRepresentation, rough = 0.5) {
   return new THREE.MeshStandardMaterial({ color, roughness: rough });
 }
 
-/** silly hats; `crown` is reserved for the human */
+/** the crown floats over whichever bean you control */
+export function makeCrown() {
+  return makeHat(0, '#ffffff', true);
+}
+
+/** silly hats */
 function makeHat(kind: number, color: string, crown: boolean) {
   const g = new THREE.Group();
   if (crown) {
@@ -245,7 +250,7 @@ export class BeanActor {
   private flail = Math.random() * 10;
   private walk = 0;
 
-  constructor(public bro: Bro, info: TeamInfo, human: boolean) {
+  constructor(public bro: Bro, info: TeamInfo) {
     const rnd = (n: number) => Math.abs(Math.sin(bro.id * 12.9898 + n * 78.233) * 43758.5453) % 1;
     const pattern = PATTERNS[Math.floor(rnd(1) * PATTERNS.length)];
     // patterns in the secondary colour only when it is bright; dark kits get white trims
@@ -330,7 +335,7 @@ export class BeanActor {
       this.arms.push(pivot);
     }
     // legs: stubby with big shoes
-    const shoe = std(human ? 0xffc83d : 0x2a2a35, 0.45);
+    const shoe = std(0x2a2a35, 0.45);
     for (const s of [-1, 1]) {
       const pivot = new THREE.Group();
       pivot.position.set(s * 0.15, 0.24, 0);
@@ -344,7 +349,7 @@ export class BeanActor {
       this.jelly.add(pivot);
       this.legs.push(pivot);
     }
-    this.hat = makeHat(Math.floor(rnd(2) * 8), info.secondary === '#ffffff' ? info.primary : info.secondary, human);
+    this.hat = makeHat(Math.floor(rnd(2) * 8), info.secondary === '#ffffff' ? info.primary : info.secondary, false);
     this.hat.position.y = TOP * 2 + 0.02;
     this.jelly.add(this.hat);
 

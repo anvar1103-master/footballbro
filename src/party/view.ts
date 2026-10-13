@@ -8,7 +8,7 @@ import { Particles } from '../render/effects';
 import { GoalNet } from '../render/net';
 import type { Quality } from '../settings';
 import { Arena } from './arena';
-import { BeanActor } from './bean';
+import { BeanActor, makeCrown } from './bean';
 import { ARENA, PartyEvent, PartyWorld } from './world';
 
 /** bright sky dome: deep blue on top, pale at the horizon, pastel below the island */
@@ -123,6 +123,8 @@ export class PartyRenderer {
   particles = new Particles(1400);
   arena: Arena;
   marker: THREE.Mesh;
+  crown: THREE.Group;
+  private crownPos = new THREE.Vector3();
   sun: THREE.DirectionalLight;
   time = 0;
   private first = true;
@@ -191,7 +193,7 @@ export class PartyRenderer {
     this.scene.add(this.particles.mesh);
 
     for (const b of w.bros) {
-      const a = new BeanActor(b, w.teams[b.team].info, b === w.controlled);
+      const a = new BeanActor(b, w.teams[b.team].info);
       this.actors.push(a);
       this.scene.add(a.root, a.stars);
     }
@@ -199,6 +201,9 @@ export class PartyRenderer {
     this.marker = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 40), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.85, depthWrite: false }));
     this.marker.rotation.x = -Math.PI / 2;
     this.scene.add(this.marker);
+    this.crown = makeCrown();
+    this.crown.scale.setScalar(1.3);
+    this.scene.add(this.crown);
     window.addEventListener('resize', () => this.resize());
   }
 
@@ -249,9 +254,16 @@ export class PartyRenderer {
     const c = w.controlled;
     this.marker.visible = !!c;
     const focus = c ? c.position() : bp.clone();
+    this.crown.visible = !!c;
     if (c) {
       this.marker.position.set(focus.x, 0.04, focus.z);
       this.marker.scale.setScalar(1 + Math.sin(this.time * 5) * 0.06);
+      // the crown flies over to the bean you switched to
+      const want = focus.clone().add(new THREE.Vector3(0, 1.32 + Math.sin(this.time * 3) * 0.06, 0));
+      if (this.crownPos.lengthSq() === 0) this.crownPos.copy(want);
+      this.crownPos.lerp(want, 1 - Math.exp(-dt * 12));
+      this.crown.position.copy(this.crownPos);
+      this.crown.rotation.y += dt * 1.5;
     }
     const attack = c ? w.teams[c.team].dir : 1;
     if (!c && this.cam.mode < 2) this.cam.mode = 2;

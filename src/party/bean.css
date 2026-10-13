@@ -52,3 +52,6 @@
 .bb-hint b { color: var(--bb-yellow); }
 .bb-panel { background: linear-gradient(160deg, #7b3fe4, #ff4fa3) !important; border: 4px solid #fff !important; }
 .bb-panel h2 { -webkit-text-stroke: 2px #3a1670; text-shadow: 0 5px 0 #3a1670; }
+
+.bb-sw { position: absolute; left: 0; top: 0; display: none; background: #fff; color: #3a1670; font-size: 15px; padding: 0 8px;
+  border-radius: 999px; border: 2px solid #3a1670; opacity: 0.9; }

@@ -34,8 +34,11 @@ arena.ts  — sky island: pitch texture, extruded slab + rock cone, candy-stripe
 view.ts   — PartyRenderer + ChaseCamera (behind the bean looking at the attacked goal, biased to the ball, backs off
             when the ball is behind; V: close / high / TV). Reuses GoalNet (render/net.ts) and Particles.
 main.ts   — menu (teams 3/4/5, length, difficulty, layout), HUD (bean.css), sounds, countdown, events, pause, end.
-            Keys (arrows layout): arrows run, Shift sprint, Space/W jump, D kick (hold), S pass, A lob, E tackle, Q grab.
-            WASD layout: J kick, K pass, L lob, I tackle, U grab, Space jump.
+            Keys (arrows layout): arrows run, Shift sprint, Space/W jump, D kick (hold), S pass, A lob, E tackle, R grab,
+            Q switch. WASD layout: J kick, K pass, L lob, I tackle, U grab, Q/O switch, Space jump.
+Switching: Q → pickSwitch() (teammate on the ball, else closest to it); presses within ~1.8 s cycle to the next-best.
+autoSwitch (menu, default on): control jumps to a teammate who gets the ball (your pass arriving). The crown floats
+over the controlled bean (view.ts), HUD bubble marks w.switchTarget. Human input is handled ONCE per step before AI.
 ```
 Tests: `tests/party.test.ts` (balance, ball drop, get-up, kick power/direction, pass arrives, lob lands, dribble hold,
 tackle, grab, goal → kick-off, chaos on/off, full AI match). Headless: step `PartyWorld` directly (4v4 ≈ 25× realtime).

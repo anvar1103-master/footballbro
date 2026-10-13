@@ -53,8 +53,10 @@ export interface PartyInput {
   lob: boolean;
   tackle: boolean;
   grab: boolean;
+  /** switch to another bean of your team */
+  switch: boolean;
 }
-export const NO_INPUT: PartyInput = { mx: 0, mz: 0, sprint: false, jump: false, kick: false, pass: false, lob: false, tackle: false, grab: false };
+export const NO_INPUT: PartyInput = { mx: 0, mz: 0, sprint: false, jump: false, kick: false, pass: false, lob: false, tackle: false, grab: false, switch: false };
 
 export type EventKind = 'mega' | 'lowgrav' | 'ice' | 'turbo' | 'sweeper';
 export const EVENT_INFO: Record<EventKind, { title: string; sub: string }> = {
@@ -66,7 +68,7 @@ export const EVENT_INFO: Record<EventKind, { title: string; sub: string }> = {
 };
 
 export interface PartyEvent {
-  type: 'kick' | 'bounce' | 'post' | 'net' | 'wall' | 'goal' | 'bonk' | 'whistle' | 'tackle' | 'grab' | 'header' | 'event' | 'eventEnd' | 'countdown' | 'drop' | 'golden' | 'over';
+  type: 'switch' | 'kick' | 'bounce' | 'post' | 'net' | 'wall' | 'goal' | 'bonk' | 'whistle' | 'tackle' | 'grab' | 'header' | 'event' | 'eventEnd' | 'countdown' | 'drop' | 'golden' | 'over';
   pos?: Vector3;
   strength?: number;
   team?: number;
@@ -92,6 +94,8 @@ export interface WorldOpts {
   difficulty?: 'easy' | 'normal' | 'hard';
   /** chaos events on/off (tests switch them off) */
   events?: boolean;
+  /** control jumps to a teammate who gets the ball (default on) */
+  autoSwitch?: boolean;
 }
 
 export type Phase = 'countdown' | 'play' | 'goal' | 'over';
@@ -107,6 +111,10 @@ export class PartyWorld {
   rng: Rng;
   humanTeam: number;
   controlled: Bro | null = null;
+  /** who the switch key would pick right now (shown in the HUD) */
+  switchTarget: Bro | null = null;
+  private switchCd = 0;
+  private switchCycle: Bro[] = [];
   phase: Phase = 'countdown';
   phaseT = 0;
   /** played time (s) */
@@ -224,7 +232,6 @@ export class PartyWorld {
       // the human is the striker of their team (not the back bean)
       const mine = this.teamBros(this.humanTeam);
       this.controlled = mine[Math.min(1, mine.length - 1)];
-      this.controlled.name = 'ТЫ';
     }
     this.startCountdown();
   }
@@ -303,6 +310,7 @@ export class PartyWorld {
     this.phaseT += dt;
     for (const k of Object.keys(this.cds) as (keyof typeof this.cds)[]) this.cds[k] -= dt;
     this.slowmo = Math.max(0, this.slowmo - dt);
+    this.switchCd -= dt;
 
     if (this.phase === 'countdown') {
       const left = Math.ceil(2.4 - this.phaseT);
@@ -346,6 +354,8 @@ export class PartyWorld {
     for (const b of this.bros) b.step(dt, this.world);
     this.ballForces(dt);
     if (this.phase === 'play') this.dribbleAssist(dt);
+    if (this.phase === 'play') this.autoSwitch();
+    this.switchTarget = this.pickSwitch();
     if (this.sweeper.on) this.updateSweeper(dt);
     this.pendingHits.length = 0;
     this.world.step(dt);
@@ -810,9 +820,64 @@ export class PartyWorld {
     return p.clone().addScaledVector(b.face, 18);
   }
 
+  // ---------------- switching beans ----------------
+  /** best teammate to take over: the one on the ball, else the one who gets to it first */
+  pickSwitch(skip: Bro[] = []): Bro | null {
+    const c = this.controlled;
+    if (!c) return null;
+    const bp = this.ballPos();
+    let best: Bro | null = null;
+    let bs = 1e9;
+    for (const b of this.teamBros(c.team)) {
+      if (b === c || skip.includes(b)) continue;
+      const p = b.position();
+      let s = Math.hypot(bp.x - p.x, bp.z - p.z);
+      if (b === this.holder) s -= 100;
+      if (b.state !== 'up') s += 8;
+      if (s < bs) {
+        bs = s;
+        best = b;
+      }
+    }
+    return best;
+  }
+
+  switchTo(b: Bro | null) {
+    const c = this.controlled;
+    if (!b || !c || b === c || b.team !== c.team) return;
+    c.charging = null;
+    c.kickCharge = 0;
+    if (c.grabbing) this.release(c);
+    this.buffer = null;
+    this.controlled = b;
+    this.switchCd = 0.6;
+    this.emit({ type: 'switch', pos: b.position(), team: b.team });
+  }
+
+  /** a teammate got the ball (e.g. your pass arrived): take him over */
+  private autoSwitch() {
+    const c = this.controlled;
+    const h = this.holder;
+    if (!c || this.opts.autoSwitch === false || !h || h === c || h.team !== c.team || this.switchCd > 0) return;
+    this.switchTo(h);
+    this.switchCycle = [];
+  }
+
   // ---------------- the human bean ----------------
   private human(b: Bro, input: PartyInput, dt: number) {
     const prev = this.prevInput;
+    if (input.switch && !prev.switch) {
+      // repeated presses cycle through the next-best teammates
+      if (this.switchCycle.length && this.switchCycle[this.switchCycle.length - 1] === b && this.switchCd > -1.2) {
+        const next = this.pickSwitch(this.switchCycle);
+        if (next) this.switchCycle.push(next);
+        else this.switchCycle = [b];
+      } else this.switchCycle = [b];
+      const target = this.switchCycle.length > 1 ? this.switchCycle[this.switchCycle.length - 1] : this.pickSwitch();
+      if (this.switchCycle.length === 1 && target) this.switchCycle.push(target);
+      this.switchTo(target);
+      b = this.controlled!;
+    }
     b.intent = { moveX: input.mx, moveZ: input.mz, sprint: input.sprint, jump: input.jump, dive: input.tackle && !prev.tackle };
     if (this.phase === 'goal') return;
     // grab: hold to hang on

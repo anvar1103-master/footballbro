@@ -19,19 +19,19 @@ const sound = new Sound();
 
 // ---------------- input ----------------
 type Layout = 'arrows' | 'wasd';
-type Act = 'up' | 'down' | 'left' | 'right' | 'sprint' | 'jump' | 'kick' | 'pass' | 'lob' | 'tackle' | 'grab';
+type Act = 'up' | 'down' | 'left' | 'right' | 'sprint' | 'jump' | 'kick' | 'pass' | 'lob' | 'tackle' | 'grab' | 'switch';
 const LAYOUTS: Record<Layout, { name: string; keys: Record<Act, string[]> }> = {
   arrows: {
-    name: 'Стрелки + ASDWEQ',
-    keys: { up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space', 'KeyW'], kick: ['KeyD'], pass: ['KeyS'], lob: ['KeyA'], tackle: ['KeyE'], grab: ['KeyQ'] },
+    name: 'Стрелки + ASDWEQR',
+    keys: { up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space', 'KeyW'], kick: ['KeyD'], pass: ['KeyS'], lob: ['KeyA'], tackle: ['KeyE'], grab: ['KeyR'], switch: ['KeyQ'] },
   },
   wasd: {
     name: 'WASD + JKLIU',
-    keys: { up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space'], kick: ['KeyJ'], pass: ['KeyK'], lob: ['KeyL'], tackle: ['KeyI'], grab: ['KeyU'] },
+    keys: { up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space'], kick: ['KeyJ'], pass: ['KeyK'], lob: ['KeyL'], tackle: ['KeyI'], grab: ['KeyU'], switch: ['KeyQ', 'KeyO'] },
   },
 };
 let layout: Layout = 'arrows';
-const opts = { size: 4, length: 180, difficulty: 'normal' as 'easy' | 'normal' | 'hard' };
+const opts = { size: 4, length: 180, difficulty: 'normal' as 'easy' | 'normal' | 'hard', autoSwitch: true };
 try {
   layout = (localStorage.getItem('footballbro.bean.layout') as Layout) || 'arrows';
   Object.assign(opts, JSON.parse(localStorage.getItem('footballbro.bean.opts') ?? '{}'));
@@ -61,7 +61,7 @@ function readInput(cam: { forward(): THREE.Vector3 }): PartyInput {
     mx /= l;
     mz /= l;
   }
-  return { mx, mz, sprint: h('sprint'), jump: h('jump'), kick: h('kick'), pass: h('pass'), lob: h('lob'), tackle: h('tackle'), grab: h('grab') };
+  return { mx, mz, sprint: h('sprint'), jump: h('jump'), kick: h('kick'), pass: h('pass'), lob: h('lob'), tackle: h('tackle'), grab: h('grab'), switch: h('switch') };
 }
 const label = (c: string) =>
   c.startsWith('Key') ? c.slice(3) : c.startsWith('Arrow') ? ({ ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' } as Record<string, string>)[c] : c === 'Space' ? 'Пробел' : c.replace('Left', '').replace('Right', '');
@@ -81,6 +81,7 @@ class Session {
   clock: HTMLDivElement;
   chaos: HTMLDivElement;
   tag: HTMLDivElement;
+  sw: HTMLDivElement;
   count: HTMLDivElement;
   bannerT = 0;
   toastT = 0;
@@ -106,7 +107,8 @@ class Session {
       <div class="bb-count"></div>
       <div class="bb-toast"></div>
       <div class="bb-tag"><div class="bb-name">ТЫ</div><div class="bb-power"><div></div></div></div>
-      <div class="bb-hint">${watch ? 'Режим наблюдения · Esc пауза' : `<b>${kl('kick')}</b> удар (держи) · <b>${kl('pass')}</b> пас · <b>${kl('lob')}</b> навес · <b>${kl('tackle')}</b> подкат · <b>${kl('grab')}</b> схватить · <b>${kl('jump')}</b> прыжок · <b>${kl('sprint')}</b> спринт · <b>V</b> камера · <b>Esc</b> пауза`}</div>`;
+      <div class="bb-sw">${kl('switch')}</div>
+      <div class="bb-hint">${watch ? 'Режим наблюдения · Esc пауза' : `<b>${kl('kick')}</b> удар (держи) · <b>${kl('pass')}</b> пас · <b>${kl('lob')}</b> навес · <b>${kl('tackle')}</b> подкат · <b>${kl('grab')}</b> схватить · <b>${kl('switch')}</b> смена · <b>${kl('jump')}</b> прыжок · <b>${kl('sprint')}</b> спринт · <b>V</b> камера · <b>Esc</b> пауза`}</div>`;
     uiEl.appendChild(hud);
     this.hud = hud;
     this.banner = hud.querySelector('.bb-banner')!;
@@ -116,6 +118,7 @@ class Session {
     this.chaos = hud.querySelector('.bb-chaos')!;
     this.tag = hud.querySelector('.bb-tag')!;
     this.count = hud.querySelector('.bb-count')!;
+    this.sw = hud.querySelector('.bb-sw')!;
     this.showCount('3');
     this.loop = this.loop.bind(this);
     this.raf = requestAnimationFrame(this.loop);
@@ -185,6 +188,9 @@ class Session {
         case 'grab':
           sound.whoosh();
           if (e.team === me?.team) this.showToast('ПОПАЛСЯ!');
+          break;
+        case 'switch':
+          sound.whoosh();
           break;
         case 'header':
           sound.kick(12);
@@ -262,7 +268,7 @@ class Session {
     if ((this.countT -= dt) <= 0) this.count.classList.remove('show');
     const c = w.controlled;
     if (c && !this.watch) {
-      const s = this.gfx.project(c.position().add(new THREE.Vector3(0, 1.55, 0)));
+      const s = this.gfx.project(c.position().add(new THREE.Vector3(0, 1.9, 0)));
       this.tag.style.display = s.visible ? 'flex' : 'none';
       this.tag.style.transform = `translate(${Math.round(s.x)}px, ${Math.round(s.y)}px) translate(-50%, -100%)`;
       (this.tag.querySelector('.bb-name') as HTMLElement).textContent = c.state === 'up' ? (c.grabbing ? 'ДЕРЖУ!' : w.grabbedBy(c) ? 'ПУСТИ!' : 'ТЫ') : 'ОЙ…';
@@ -270,6 +276,13 @@ class Session {
       pw.style.visibility = c.charging ? 'visible' : 'hidden';
       (pw.firstElementChild as HTMLElement).style.width = `${Math.round(Math.min(1, c.kickCharge / 0.8) * 100)}%`;
     } else this.tag.style.display = 'none';
+    // who the switch key would take over
+    const st = w.switchTarget;
+    if (st && !this.watch && w.phase !== 'over') {
+      const s = this.gfx.project(st.position().add(new THREE.Vector3(0, 1.45, 0)));
+      this.sw.style.display = s.visible ? 'block' : 'none';
+      this.sw.style.transform = `translate(${Math.round(s.x)}px, ${Math.round(s.y)}px) translate(-50%, -100%)`;
+    } else this.sw.style.display = 'none';
     if (w.phase === 'over' && !this.overShown && w.phaseT > 1.5) {
       this.overShown = true;
       const [a, b] = w.teams;
@@ -325,7 +338,7 @@ async function start(watch: boolean) {
   const params = new URLSearchParams(location.search);
   const size = Number(params.get('size') ?? opts.size);
   const length = Number(params.get('len') ?? opts.length);
-  const w = await PartyWorld.create({ humanTeam: watch ? -1 : 0, size, matchLength: length, teams, difficulty: opts.difficulty });
+  const w = await PartyWorld.create({ humanTeam: watch ? -1 : 0, size, matchLength: length, teams, difficulty: opts.difficulty, autoSwitch: opts.autoSwitch });
   session = new Session(w, watch);
 }
 function toMenu() {
@@ -357,6 +370,7 @@ function showMenu() {
         <div class="opt"><div class="label">Команды</div>${seg('size', [[3, '3×3'], [4, '4×4'], [5, '5×5']], opts.size)}</div>
         <div class="opt"><div class="label">Матч</div>${seg('length', [[120, '2 мин'], [180, '3 мин'], [300, '5 мин']], opts.length)}</div>
         <div class="opt"><div class="label">Соперники</div>${seg('difficulty', [['easy', 'Сонные'], ['normal', 'Бодрые'], ['hard', 'Злые']], opts.difficulty)}</div>
+        <div class="opt"><div class="label">Автосмена игрока</div>${seg('auto', [['on', 'Вкл'], ['off', 'Выкл']], opts.autoSwitch ? 'on' : 'off')}</div>
         <div class="opt"><div class="label">Раскладка</div>${seg('layout', (Object.keys(LAYOUTS) as Layout[]).map((k) => [k, LAYOUTS[k].name]), layout)}</div>
       </div>
       <div class="controls bb-controls">
@@ -364,6 +378,7 @@ function showMenu() {
         <div><b>${kl('kick')}</b> удар — держи, чтобы сильнее</div>
         <div><b>${kl('pass')}</b> пас своему · <b>${kl('lob')}</b> навес</div>
         <div><b>${kl('tackle')}</b> подкат рыбкой · <b>${kl('grab')}</b> схватить соперника (держи)</div>
+        <div><b>${kl('switch')}</b> смена игрока — на того, кто ближе к мячу (жми ещё — следующий)</div>
         <div><b>${kl('jump')}</b> прыжок (по мячу в воздухе — удар головой)</div>
         <div><b>V</b> камера · <b>Esc</b> пауза · <b>M</b> звук</div>
       </div>
@@ -382,6 +397,7 @@ function showMenu() {
       if (k === 'length') opts.length = Number(v);
       if (k === 'difficulty') opts.difficulty = v as typeof opts.difficulty;
       if (k === 'layout') layout = v as Layout;
+      if (k === 'auto') opts.autoSwitch = v === 'on';
       save();
       render();
     }
