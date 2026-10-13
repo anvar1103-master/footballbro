@@ -286,6 +286,57 @@ describe('bean ball', () => {
     expect(w.events.filter((e) => e.type === 'drop').length).toBe(0);
   });
 
+  it('auto switch: a teammate clearly closer to a loose ball is taken over', async () => {
+    const { w, c, mate, park } = await sandbox(25);
+    c.teleport(-10, -8, 1);
+    mate.teleport(6, 5, 1);
+    w.ball.setTranslation({ x: 8, y: w.ballR, z: 6 });
+    w.ball.setLinvel({ x: 0, y: 0, z: 0 });
+    for (let t = 0; t < 0.3; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park([c, mate]);
+    }
+    expect(w.controlled).toBe(mate);
+  });
+
+  it('without the ball: pass = switch player, shot near the carrier = slide tackle', async () => {
+    const { w, c, park } = await sandbox(26);
+    const opp = w.teamBros(1)[1];
+    // opponent dribbling right in front of us
+    opp.teleport(2.2, 0, 1);
+    w.ball.setTranslation({ x: 3.0, y: w.ballR, z: 0 });
+    w.ball.setLinvel({ x: 0, y: 0, z: 0 });
+    for (let t = 0; t < 0.2; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park([c, opp]);
+      opp.teleport(2.2, 0, 1, true);
+    }
+    w.holder = opp; // (the AI may already have played it on)
+    w.ball.setTranslation({ x: 3.0, y: w.ballR, z: 0 });
+    w.step(PARTY_DT, { ...NO_INPUT, kick: true });
+    w.step(PARTY_DT, NO_INPUT);
+    expect(c.state).toBe('dive');
+    const s2 = await sandbox(27);
+    s2.c.teleport(-15, 0, 1);
+    s2.park([s2.c]);
+    const before = s2.w.controlled;
+    s2.w.step(PARTY_DT, { ...NO_INPUT, pass: true });
+    expect(s2.w.controlled).not.toBe(before);
+  });
+
+  it('ball and players that slip through a wall are put back inside', async () => {
+    const w = await world(28);
+    run(w, 2.6);
+    w.ball.setTranslation({ x: 3, y: 0.5, z: ARENA.width / 2 + 0.4 });
+    w.ball.setLinvel({ x: 0, y: 0, z: 5 });
+    const b = w.bros[3];
+    b.teleport(ARENA.length / 2 + 0.3, 8, 1); // beside the goal, in the wall
+    run(w, 0.1);
+    expect(Math.abs(w.ballPos().z)).toBeLessThan(ARENA.width / 2);
+    expect(w.ballVel().z).toBeLessThan(0.1);
+    expect(Math.abs(b.position().x)).toBeLessThan(ARENA.length / 2);
+  });
+
   it('a ball over the goal line counts and the next kick-off follows', async () => {
     const w = await world(12);
     run(w, 2.6);

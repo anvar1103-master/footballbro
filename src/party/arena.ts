@@ -176,7 +176,7 @@ export class Arena {
     pitch.receiveShadow = true;
     this.group.add(pitch);
     // hall floor beyond the pitch
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA.length + 40, ARENA.width + 40), new THREE.MeshStandardMaterial({ color: '#3a3f4a', roughness: 0.9 }));
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA.length + 40, ARENA.width + 40), new THREE.MeshStandardMaterial({ color: '#2d4f86', roughness: 0.85 }));
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -0.01;
     floor.receiveShadow = true;
@@ -246,11 +246,11 @@ export class Arena {
     }
 
     // ---- hall shell: outer walls, roof, trusses, light panels ----
-    const shell = new THREE.MeshStandardMaterial({ color: '#2a2f3a', roughness: 0.95, side: THREE.BackSide });
+    const shell = new THREE.MeshStandardMaterial({ color: '#4b5466', roughness: 0.95, side: THREE.BackSide });
     const hall = new THREE.Mesh(new THREE.BoxGeometry(ARENA.length + 26, HALL_H + 6, ARENA.width + 22), shell);
     hall.position.y = (HALL_H + 6) / 2 - 0.02;
     this.group.add(hall);
-    const roof = new THREE.Mesh(new THREE.PlaneGeometry(ARENA.length + 26, ARENA.width + 22), new THREE.MeshStandardMaterial({ color: '#3b414e', roughness: 0.9, side: THREE.DoubleSide }));
+    const roof = new THREE.Mesh(new THREE.PlaneGeometry(ARENA.length + 26, ARENA.width + 22), new THREE.MeshStandardMaterial({ color: '#5d6677', roughness: 0.9, side: THREE.DoubleSide }));
     roof.rotation.x = Math.PI / 2;
     roof.position.y = HALL_H + 2.5;
     this.group.add(roof);
