@@ -16,6 +16,8 @@ import type { FieldDims } from '../sim/config';
 
 /** Visual scale of the Kenney chibi: 0.55 m model -> ~1.7 m bro (capsule 1.52 m + big head). */
 const MODEL_SCALE = 3.05;
+/** visual ball scale over the physics radius */
+const BALL_VIS = 1.25;
 
 /** One bro on screen: model riding the physics body, limbs animated procedurally. */
 class BroActor {
@@ -130,11 +132,12 @@ class PartyCamera {
   follow(ball: THREE.Vector3, focus: THREE.Vector3, dt: number, snap = false) {
     const f = this.f;
     // TV gantry on the near touchline: pans with the play, scaled to the pitch size
-    const s = Math.min(1.25, Math.max(0.8, f.length / 80)) * (this.zoom ? 0.68 : 1);
+    // closer than a real broadcast so bros and the ball read well; V = even closer
+    const s = Math.min(1, Math.max(0.72, f.length / 95)) * (this.zoom ? 0.65 : 1);
     const lx = Math.max(-f.length / 2 + 6, Math.min(f.length / 2 - 6, ball.x * 0.8 + focus.x * 0.2));
     const lz = Math.max(-f.width / 2 + 5, Math.min(f.width / 2 - 5, (ball.z * 0.8 + focus.z * 0.2) * 0.75));
     const wantLook = new THREE.Vector3(lx, 0, lz);
-    const wantPos = new THREE.Vector3(lx * 0.85, 24 * s, f.width / 2 + 20 * s + lz * 0.15);
+    const wantPos = new THREE.Vector3(lx * 0.9, 23 * s, lz + 33 * s);
     const k = snap ? 1 : 1 - Math.exp(-dt * 3);
     this.look.lerp(wantLook, k);
     this.pos.lerp(wantPos, snap ? 1 : 1 - Math.exp(-dt * 2.2));
@@ -166,20 +169,20 @@ export class PartyRenderer {
     r.shadowMap.enabled = !low;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 0.9;
+    r.toneMappingExposure = 1.0;
     r.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(r.domElement);
     this.renderer = r;
     this.cam = new PartyCamera(container.clientWidth / container.clientHeight, w.field);
 
-    this.scene.fog = new THREE.Fog(0xc9def0, 200, 600);
-    this.scene.add(makeSky());
+    this.scene.fog = new THREE.Fog(0xd5dde4, 160, 600);
+    this.scene.add(makeSky(true));
     const pm = new THREE.PMREMGenerator(r);
     this.scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.4;
+    this.scene.environmentIntensity = 0.5;
     pm.dispose();
-    this.scene.add(new THREE.HemisphereLight(0xe4f1ff, 0x3d6a32, 0.6));
-    const sun = new THREE.DirectionalLight(0xffe2bd, 2.6);
+    this.scene.add(new THREE.HemisphereLight(0xdde7f0, 0x47553a, 0.5));
+    const sun = new THREE.DirectionalLight(0xfff0dc, 2.9);
     sun.position.set(-30, 45, 35);
     sun.castShadow = true;
     const ext = w.field.length / 2 + 8;
@@ -199,12 +202,13 @@ export class PartyRenderer {
       this.composer = c;
     }
 
-    this.stadium = new Stadium(w.field, w.teams.map((t) => t.info), 0);
+    this.stadium = new Stadium(w.field, w.teams.map((t) => t.info), 0, true);
     this.scene.add(this.stadium.group);
-    this.nets = [new GoalNet(w.field, -1, BALL_P.radius + 0.03), new GoalNet(w.field, 1, BALL_P.radius + 0.03)];
+    this.nets = [new GoalNet(w.field, -1, BALL_P.radius * BALL_VIS + 0.02), new GoalNet(w.field, 1, BALL_P.radius * BALL_VIS + 0.02)];
     for (const n of this.nets) this.scene.add(n.mesh);
 
-    this.ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_P.radius, 32, 16), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.4 }));
+    // drawn a bit larger than the physics ball so it reads from the TV camera
+    this.ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_P.radius * BALL_VIS, 32, 16), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.35, emissive: 0xffffff, emissiveIntensity: 0.12 }));
     this.ballMesh.castShadow = true;
     this.scene.add(this.ballMesh);
     const sc = document.createElement('canvas');
@@ -265,6 +269,7 @@ export class PartyRenderer {
     const bp = w.ballPos();
     const br = w.ball.rotation();
     this.ballMesh.position.copy(bp);
+    this.ballMesh.position.y += BALL_P.radius * (BALL_VIS - 1);
     this.ballMesh.quaternion.set(br.x, br.y, br.z, br.w);
     const hgt = Math.max(0, bp.y - BALL_P.radius);
     const s = BALL_P.radius * 2.6 * (1 + hgt * 0.2);

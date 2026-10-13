@@ -6,7 +6,7 @@ import type { TeamInfo } from '../sim/team';
 
 const PX_PER_M = 26;
 
-function pitchTexture(f: FieldDims, margin: number) {
+function pitchTexture(f: FieldDims, margin: number, real = false) {
   const W = f.length + margin * 2;
   const H = f.width + margin * 2;
   const cw = Math.min(4096, Math.round(W * PX_PER_M));
@@ -19,14 +19,14 @@ function pitchTexture(f: FieldDims, margin: number) {
   // mowing stripes
   const stripes = 14;
   const sw = (f.length / stripes) * scale;
-  g.fillStyle = '#2f7f2b';
+  g.fillStyle = real ? '#30602a' : '#2f7f2b';
   g.fillRect(0, 0, cw, ch);
   for (let i = -2; i < stripes + 2; i++) {
-    g.fillStyle = i % 2 === 0 ? '#3f9c37' : '#2f832b';
+    g.fillStyle = real ? (i % 2 === 0 ? '#3a7130' : '#315f28') : i % 2 === 0 ? '#3f9c37' : '#2f832b';
     g.fillRect(margin * scale + i * sw, 0, sw, ch);
   }
   // subtle checker for the cartoon "mown" look
-  g.globalAlpha = 0.06;
+  g.globalAlpha = real ? 0 : 0.06;
   const cs = (f.width / 8) * scale;
   for (let y = 0; y < ch / cs; y++) {
     g.fillStyle = y % 2 ? '#ffffff' : '#000000';
@@ -39,7 +39,7 @@ function pitchTexture(f: FieldDims, margin: number) {
   let seed = 7;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   for (let i = 0; i < d.length; i += 4) {
-    const n = (rnd() - 0.5) * 14;
+    const n = (rnd() - 0.5) * (real ? 18 : 14);
     d[i] += n * 0.6;
     d[i + 1] += n;
     d[i + 2] += n * 0.4;
@@ -49,8 +49,8 @@ function pitchTexture(f: FieldDims, margin: number) {
   // lines
   const X = (x: number) => (x + W / 2) * scale;
   const Y = (z: number) => (z + H / 2) * scale;
-  g.strokeStyle = 'rgba(255,255,255,0.95)';
-  g.lineWidth = 0.13 * scale;
+  g.strokeStyle = real ? 'rgba(240,244,240,0.85)' : 'rgba(255,255,255,0.95)';
+  g.lineWidth = (real ? 0.12 : 0.13) * scale;
   g.lineJoin = 'round';
   const L = f.length / 2, Wd = f.width / 2;
   g.strokeRect(X(-L), Y(-Wd), f.length * scale, f.width * scale);
@@ -212,9 +212,10 @@ export class Stadium {
   crowdUniforms = { uTime: { value: 0 }, uHype: { value: 0 } };
   flagGroups: THREE.Object3D[] = [];
 
-  constructor(public f: FieldDims, teams: TeamInfo[], public homeTeamForCrowd: number) {
+  /** real = muted broadcast look (Footballbro); otherwise the saturated cartoon look (Soccerbro) */
+  constructor(public f: FieldDims, teams: TeamInfo[], public homeTeamForCrowd: number, public real = false) {
     const margin = f.boardMargin + 3;
-    const { tex, W, H } = pitchTexture(f, margin);
+    const { tex, W, H } = pitchTexture(f, margin, real);
     const grassMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92 });
     const detail = grassDetailTexture();
     const blades = { value: detail };
@@ -231,7 +232,7 @@ export class Stadium {
           `#include <map_fragment>
           float d1 = texture2D(uDetail, vWorldXZ * 0.55).r;
           float d2 = texture2D(uDetail, vWorldXZ * 0.071 + 0.3).g;
-          diffuseColor.rgb *= mix(0.82, 1.14, d1) * mix(0.9, 1.08, d2);`,
+          diffuseColor.rgb *= mix(${real ? '0.78, 1.12' : '0.82, 1.14'}, d1) * mix(${real ? '0.86, 1.1' : '0.9, 1.08'}, d2);`,
         );
     };
     const pitch = new THREE.Mesh(new THREE.PlaneGeometry(W, H), grassMat);
@@ -240,7 +241,7 @@ export class Stadium {
     this.group.add(pitch);
 
     // surround (track) beyond the boards
-    const surround = new THREE.Mesh(new THREE.PlaneGeometry(W + 80, H + 80), new THREE.MeshStandardMaterial({ color: 0x2f6f3a, roughness: 1 }));
+    const surround = new THREE.Mesh(new THREE.PlaneGeometry(W + 80, H + 80), new THREE.MeshStandardMaterial({ color: real ? 0x2c5426 : 0x2f6f3a, roughness: 1 }));
     surround.rotation.x = -Math.PI / 2;
     surround.position.y = -0.02;
     surround.receiveShadow = true;
@@ -400,7 +401,13 @@ export class Stadium {
           // home end is busier with home colours
           const r = rng();
           const team = si === 3 ? 1 : si === 2 ? 0 : r < 0.5 ? 0 : 1;
-          const c = rng() < 0.55 ? seatColors[team].clone() : new THREE.Color().setHSL(rng(), 0.3, 0.42 + rng() * 0.2);
+          const c = this.real
+            ? rng() < 0.3
+              ? seatColors[team].clone().offsetHSL(0, -0.25, -0.08)
+              : new THREE.Color().setHSL(rng(), 0.12 + rng() * 0.15, 0.18 + rng() * 0.35)
+            : rng() < 0.55
+              ? seatColors[team].clone()
+              : new THREE.Color().setHSL(rng(), 0.3, 0.42 + rng() * 0.2);
           c.lerp(new THREE.Color(0x30384a), 0.25 + t * 0.012);
           c.offsetHSL(0, -0.05, (rng() - 0.5) * 0.08);
           const local = new THREE.Vector3(x + (rng() - 0.5) * 0.15, stepH * (t + 1), -(t * stepD + stepD / 2));
@@ -499,12 +506,12 @@ export class Stadium {
 }
 
 /** Gradient sky dome with a few soft cartoon clouds. */
-export function makeSky() {
+export function makeSky(real = false) {
   const geo = new THREE.SphereGeometry(600, 32, 16);
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
-    uniforms: { top: { value: new THREE.Color('#3d7fd6') }, bottom: { value: new THREE.Color('#cfe8ff') } },
+    uniforms: { top: { value: new THREE.Color(real ? '#5d8fc4' : '#3d7fd6') }, bottom: { value: new THREE.Color(real ? '#dfe7ee' : '#cfe8ff') } },
     vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
     fragmentShader:
       'uniform vec3 top; uniform vec3 bottom; varying vec3 vP; void main(){ float h = clamp(vP.y*1.6+0.05,0.0,1.0); gl_FragColor = vec4(mix(bottom, top, pow(h,0.8)),1.0); }',
@@ -526,7 +533,7 @@ export function makeSky() {
     return new THREE.CanvasTexture(c);
   })();
   for (let i = 0; i < 14; i++) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: cloudTex, transparent: true, opacity: 0.85, depthWrite: false, fog: false }));
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: cloudTex, transparent: true, opacity: real ? 0.45 : 0.85, depthWrite: false, fog: false }));
     const a = (i / 14) * Math.PI * 2 + Math.random() * 0.3;
     const r = 380 + Math.random() * 120;
     s.position.set(Math.cos(a) * r, 90 + Math.random() * 110, Math.sin(a) * r);
