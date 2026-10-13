@@ -26,12 +26,20 @@ world.ts  — PartyWorld: field = fieldFor(size) (real metres), boards as low wa
             human(): called ONCE per step before AI (calling it inside the bro loop caused the old Q-switch bug), passTo follow.
 brain.ts  — AI: formationSpot (classic FORMATIONS shifted with ball), chaser/cover/support, laneClear passes, shots in range,
             keeper shuffle/dive/clear, deadBall(): walk to spot; AI takers per set-piece kind.
-view.ts   — PartyRenderer: reuses classic Stadium/GoalNet(ball radius param)/ballTexture/buildCharacterModel; procedural limb
-            animation on Kenney bones (leg-left/right, arm-left/right, head); dizzy stars; PartyCamera (V = zoom).
+athlete.ts— AthleteActor: Mixamo Xbot mannequin (public/assets/athlete/xbot.glb, prepared by scripts/prepare-athlete.mjs),
+            kit painted in the shader by bind-pose height zones (shirt/shorts/socks/boots/skin, GK gloves), hair cap on the
+            Head bone, idle/walk/run clips blended by speed + Fall Guys clumsiness: spring-driven floppy arms & head,
+            squash/stretch on jump/landing, windmill arms in the air / off balance, flailing when down, superman dive.
+            Bone tweaks use turn(bone, modelSpaceAxis, angle) (AX = character's left, AZ = forward) — rig-axis independent.
+view.ts   — PartyRenderer: reuses classic Stadium (real=true: muted broadcast look)/GoalNet/ballTexture; ball drawn
+            BALL_VIS=1.25× physics radius; dizzy stars; PartyCamera (V = zoom).
 main.ts   — menu (layout arrows/WASD), HUD, sounds, pause, full time. Keys: arrows+D kick/S pass/A dive/W jump/E shove/Q switch.
 ```
-Tests: `tests/party.test.ts` (balance, get-up, kick, dive, switch, throw-in, full AI match). Headless: step `PartyWorld`
-directly (11v11 ≈ 10× realtime). Bro is ~1.7 m (capsule 1.52 m, MODEL_SCALE 3.05 in view.ts).
+Ball feel: ground kicks start with rolling spin and ballForces keeps spin consistent with rolling (otherwise cannon friction
+eats ~30% of a pass); dribbleAssist keeps a sticky `holder` (hysteresis: wider cone/reach for the current holder).
+Tests: `tests/party.test.ts` (balance, get-up, kick, dive, switch, throw-in, dribble hold + pass pace, full AI match). Headless: step `PartyWorld`
+directly (11v11 ≈ 10× realtime). Bro capsule is 1.52 m (r 0.36 — narrower breaks balance, see tests); athlete model ~1.8 m.
+Single-file build embeds xbot.glb for Footballbro and the Kenney GLBs only for title `Soccerbro`.
 Build the link: `VITE_ENTRY=index npx vite build --outDir .scratch/single-party --emptyOutDir && python3 -I scripts/build-single.py .scratch/single-party <scratchpad>/party/index.html Footballbro`, then Artifact publish with url above.
 Soccerbro link build: same with `VITE_ENTRY=classic` and title `Soccerbro`.
 

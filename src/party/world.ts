@@ -18,7 +18,8 @@ export const PARTY_DT = 1 / 120;
 export const BALL_P = {
   radius: 0.15,
   mass: 0.43,
-  dragK: CLASSIC_BALL.dragK,
+  /** a bit less air drag than the classic game: shots and long balls keep their pace */
+  dragK: 0.009,
   magnusK: CLASSIC_BALL.magnusK,
   rollC: CLASSIC_BALL.rollC,
   rollLin: CLASSIC_BALL.rollLin,
@@ -98,6 +99,8 @@ export class PartyWorld {
   firstKickoff = 0;
   /** the pass the human just played: control follows the ball to the receiver */
   passTo: Bro | null = null;
+  /** bro the ball is "glued" to while dribbling (sticky, with hysteresis) */
+  holder: Bro | null = null;
   private lastBallVy = 0;
   private netCd = 0;
   private postCd = 0;
@@ -147,7 +150,7 @@ export class PartyWorld {
       W.box('net', d / 2, f.goalH / 2, 0.1, x0 + dir * (d / 2), f.goalH / 2, f.goalHalfW + 0.3);
       W.box('net', d / 2, 0.1, f.goalHalfW + 0.3, x0 + dir * (d / 2), f.goalH + 0.3, 0);
     }
-    this.ball = W.ball(BALL_P.radius, BALL_P.mass, 0.02, 0.25);
+    this.ball = W.ball(BALL_P.radius, BALL_P.mass, 0.0, 0.03);
     this.ball.setTranslation({ x: 0, y: BALL_P.radius, z: 0 });
     W.onBallHit = (tag: Tag, sp: number, other) => {
       if (tag === 'net' && sp > 3 && this.netCd <= 0) {
@@ -478,39 +481,58 @@ export class PartyWorld {
         const a = BALL_P.rollC + BALL_P.rollLin * hs;
         const k = Math.min(hs, a * dt) / hs;
         this.ball.applyImpulse({ x: -v.x * k * m, y: 0, z: -v.z * k * m }, true);
+        // keep the spin consistent with rolling, or ground friction would undo the slowdown
+        const rx = v.x * (1 - k), rz = v.z * (1 - k);
+        this.ball.setAngvel({ x: rz / BALL_P.radius, y: w.y * 0.98, z: -rx / BALL_P.radius }, true);
       }
     }
     this.ball.applyImpulse({ x: fx * m * dt, y: fy * m * dt, z: fz * m * dt }, true);
   }
 
-  /** A gentle "magnet": a bro running with the ball in front keeps it close (clumsily). */
+  /**
+   * Dribbling: the ball sticks in front of the bro who has it. The holder keeps it while
+   * turning (wider cone + reach); others must get properly close in front to take it over.
+   */
   private dribbleAssist(dt: number) {
     const bp = this.ballPos();
-    if (bp.y > 0.7) return;
+    if (bp.y > 0.7) {
+      this.holder = null;
+      return;
+    }
     const bv = this.ballVel();
     let best: Bro | null = null;
-    let bd = 1.25;
+    let bd = 1e9;
     for (const b of this.bros) {
       if (!b.canAct || b.kickT >= 0) continue;
       const p = b.position();
       const dx = bp.x - p.x, dz = bp.z - p.z;
       const d = Math.hypot(dx, dz);
       const front = (dx * b.face.x + dz * b.face.z) / (d || 1);
-      if (d < bd && front > 0.25) {
-        bd = d;
-        best = b;
+      const mine = b === this.holder;
+      if (d < (mine ? 1.8 : 1.2) && front > (mine ? -0.6 : 0.15)) {
+        const score = d - (mine ? 0.5 : 0);
+        if (score < bd) {
+          bd = score;
+          best = b;
+        }
       }
     }
+    this.holder = best;
     if (!best) return;
     const p = best.position();
     const v = best.velocity();
-    const off = BRO.radius + BALL_P.radius + 0.28;
+    const human = best.team === this.humanTeam;
+    // a touch further ahead when sprinting, like a real dribble
+    const off = BRO.radius + BALL_P.radius + 0.3 + Math.min(0.35, best.speed * 0.035);
     const tx = p.x + best.face.x * off, tz = p.z + best.face.z * off;
-    const k = 5 * (best.team === this.humanTeam ? 1.3 : 1);
+    const k = human ? 9 : 7;
     const wantX = v.x + (tx - bp.x) * k, wantZ = v.z + (tz - bp.z) * k;
     const m = this.ball.mass();
-    const blend = Math.min(1, dt * 8);
+    const blend = Math.min(1, dt * (human ? 20 : 13));
     this.ball.applyImpulse({ x: (wantX - bv.x) * m * blend, y: 0, z: (wantZ - bv.z) * m * blend }, true);
+    // roll, don't slide
+    const nv = this.ballVel();
+    this.ball.setAngvel({ x: nv.z / BALL_P.radius, y: 0, z: -nv.x / BALL_P.radius }, true);
     this.lastTouch = best;
     if (this.passTo && best !== this.passTo && best.team === this.humanTeam) this.passTo = null;
   }
@@ -618,14 +640,18 @@ export class PartyWorld {
     let speed: number;
     let up: number;
     if (ground) {
-      speed = Math.min(26, groundPassSpeed(dist, 3 + power * 5));
-      up = 0.4;
+      // arrives at the mate's feet with a firm pace (ball already rolling, so the model is exact)
+      speed = Math.min(30, groundPassSpeed(dist, 5.5 + power * 5));
+      up = 0;
     } else {
-      speed = 9 + power * 21;
+      speed = 12 + power * 22;
       up = lift * speed;
     }
+    this.holder = null;
     this.ball.setLinvel({ x: dir.x * speed, y: up, z: dir.z * speed }, true);
-    this.ball.setAngvel({ x: dir.z * 6, y: curl * (25 + 25 * power), z: -dir.x * 6 }, true);
+    // ground balls start rolling (no sliding loss); lofted ones get a little backspin + curl
+    const roll = ground ? speed / BALL_P.radius : 6;
+    this.ball.setAngvel({ x: dir.z * roll, y: curl * (25 + 25 * power), z: -dir.x * roll }, true);
     this.lastTouch = b;
     this.emit({ type: 'kick', pos: bp, strength: speed, team: b.team });
     this.restart();

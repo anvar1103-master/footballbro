@@ -1,0 +1,4 @@
+xbot.glb — "X Bot" character by Adobe Mixamo (https://www.mixamo.com), taken from the three.js
+examples (examples/models/gltf/Xbot.glb), trimmed with scripts/prepare-athlete.mjs.
+Mixamo characters and animations may be used royalty-free in games and projects
+(see Adobe's Mixamo FAQ); they must not be redistributed as stand-alone assets.

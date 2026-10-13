@@ -12,7 +12,7 @@ import { Quaternion, Vector3 } from 'three';
 export const BRO = {
   radius: 0.36,
   halfHeight: 0.4,
-  /** capsule centre height when standing (capsule spans 0..1.52 m; the model is ~1.7 m with its big head) */
+  /** capsule centre height when standing (capsule spans 0..1.52 m; the athlete model is ~1.8 m) */
   centerY: 0.76,
   mass: 75,
   jog: 5.6,

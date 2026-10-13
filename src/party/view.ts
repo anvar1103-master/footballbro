@@ -7,116 +7,14 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { ballTexture } from '../render/ball';
 import { Particles } from '../render/effects';
 import { GoalNet } from '../render/net';
-import { buildCharacterModel } from '../render/players';
+import { AthleteActor } from './athlete';
 import { Stadium, makeSky } from '../render/stadium';
 import type { Quality } from '../settings';
-import { Bro, BRO } from './bro';
 import { BALL_P, PartyEvent, PartyWorld } from './world';
 import type { FieldDims } from '../sim/config';
 
-/** Visual scale of the Kenney chibi: 0.55 m model -> ~1.7 m bro (capsule 1.52 m + big head). */
-const MODEL_SCALE = 3.05;
-
-/** One bro on screen: model riding the physics body, limbs animated procedurally. */
-class BroActor {
-  root = new THREE.Group();
-  model: THREE.Object3D;
-  bones: Record<string, THREE.Object3D | undefined> = {};
-  stars: THREE.Group;
-  private flail = Math.random() * 10;
-
-  constructor(public bro: Bro, w: PartyWorld) {
-    const t = w.teams[bro.team];
-    this.model = buildCharacterModel(bro.model, bro.role === 'GK', t.info, bro.team, w.teams[1 - bro.team].info);
-    this.model.scale.setScalar(MODEL_SCALE);
-    this.model.position.y = -BRO.centerY;
-    this.root.add(this.model);
-    for (const n of ['leg-left', 'leg-right', 'arm-left', 'arm-right', 'head', 'torso']) this.bones[n] = this.model.getObjectByName(n);
-    // dizzy stars
-    this.stars = new THREE.Group();
-    const starMat = new THREE.MeshBasicMaterial({ color: 0xffe14d });
-    for (let i = 0; i < 3; i++) {
-      const s = new THREE.Mesh(new THREE.OctahedronGeometry(0.09), starMat);
-      s.position.set(Math.cos((i / 3) * Math.PI * 2) * 0.35, 0, Math.sin((i / 3) * Math.PI * 2) * 0.35);
-      this.stars.add(s);
-    }
-    this.stars.visible = false;
-  }
-
-  update(dt: number, time: number) {
-    const b = this.bro;
-    const p = b.body.translation();
-    const r = b.body.rotation();
-    this.root.position.set(p.x, p.y, p.z);
-    this.root.quaternion.set(r.x, r.y, r.z, r.w);
-    const B = this.bones;
-    const set = (n: string, x: number, y: number, z: number, k = 1) => {
-      const bone = B[n];
-      if (!bone) return;
-      // smooth towards the pose so poses blend
-      bone.rotation.x += (x - bone.rotation.x) * Math.min(1, dt * 14 * k);
-      bone.rotation.y += (y - bone.rotation.y) * Math.min(1, dt * 14 * k);
-      bone.rotation.z += (z - bone.rotation.z) * Math.min(1, dt * 14 * k);
-    };
-    const sp = b.speed;
-    const run = Math.min(1, sp / 6);
-    const ph = b.phase;
-    this.flail += dt * 17;
-    if (b.state === 'down' || b.state === 'dive') {
-      // ragdoll-ish flailing
-      const f = this.flail;
-      const dive = b.state === 'dive';
-      set('arm-left', dive ? -2.8 : Math.sin(f) * 1.2 - 0.6, 0, dive ? 0.3 : 1.6 + Math.sin(f * 1.3) * 0.5, 2);
-      set('arm-right', dive ? -2.8 : Math.cos(f) * 1.2 - 0.6, 0, dive ? -0.3 : -1.6 - Math.cos(f * 1.1) * 0.5, 2);
-      set('leg-left', dive ? 0.5 : Math.sin(f * 0.9) * 0.8, 0, 0.35, 2);
-      set('leg-right', dive ? 0.4 : Math.cos(f * 0.8) * 0.8, 0, -0.35, 2);
-      set('head', Math.sin(f * 0.7) * 0.3, Math.cos(f * 0.5) * 0.4, 0);
-    } else if (!b.grounded) {
-      // airborne: arms up, legs tucked
-      set('arm-left', -0.3, 0, 2.4);
-      set('arm-right', -0.3, 0, -2.4);
-      set('leg-left', -0.6, 0, 0.1);
-      set('leg-right', 0.3, 0, -0.1);
-      set('head', -0.2, 0, 0);
-    } else {
-      const sw = Math.sin(ph) * (0.25 + 0.75 * run);
-      let legR = sw, legL = -sw;
-      let armL = sw * 1.1, armR = -sw * 1.1;
-      let armLz = 0.15 + run * 0.25, armRz = -0.15 - run * 0.25;
-      if (b.kickT >= 0) {
-        // big cartoon swing of the right leg
-        const k = Math.sin(Math.min(1, b.kickT / 0.4) * Math.PI);
-        legR = -1.9 * k + 0.5 * (1 - k);
-        armL = -0.8 * k;
-        armLz = 1.2 * k;
-      } else if (b.charging) {
-        legR = 0.8; // wind-up
-        armLz = 0.8;
-        armRz = -0.8;
-      }
-      if (b.shoveT >= 0) {
-        const k = Math.sin(Math.min(1, b.shoveT / 0.3) * Math.PI);
-        armL = -1.5 * k;
-        armR = -1.5 * k;
-        armLz = 0.2;
-        armRz = -0.2;
-      }
-      set('leg-left', legL, 0, 0);
-      set('leg-right', legR, 0, 0, b.kickT >= 0 ? 2.5 : 1);
-      set('arm-left', armL, 0, armLz);
-      set('arm-right', armR, 0, armRz);
-      // head wobbles with body spin
-      const w = b.body.angvel();
-      set('head', Math.sin(ph * 2) * 0.06 * run - w.x * 0.03, -w.y * 0.06, -w.z * 0.03);
-    }
-    // stars when dizzy
-    this.stars.visible = b.dizzy > 0 && b.state !== 'up';
-    if (this.stars.visible) {
-      this.stars.position.set(p.x, p.y + 0.9, p.z);
-      this.stars.rotation.y = time * 6;
-    }
-  }
-}
+/** visual ball scale over the physics radius */
+const BALL_VIS = 1.25;
 
 class PartyCamera {
   camera: THREE.PerspectiveCamera;
@@ -130,11 +28,12 @@ class PartyCamera {
   follow(ball: THREE.Vector3, focus: THREE.Vector3, dt: number, snap = false) {
     const f = this.f;
     // TV gantry on the near touchline: pans with the play, scaled to the pitch size
-    const s = Math.min(1.25, Math.max(0.8, f.length / 80)) * (this.zoom ? 0.68 : 1);
+    // closer than a real broadcast so bros and the ball read well; V = even closer
+    const s = Math.min(1, Math.max(0.72, f.length / 95)) * (this.zoom ? 0.65 : 1);
     const lx = Math.max(-f.length / 2 + 6, Math.min(f.length / 2 - 6, ball.x * 0.8 + focus.x * 0.2));
     const lz = Math.max(-f.width / 2 + 5, Math.min(f.width / 2 - 5, (ball.z * 0.8 + focus.z * 0.2) * 0.75));
     const wantLook = new THREE.Vector3(lx, 0, lz);
-    const wantPos = new THREE.Vector3(lx * 0.85, 24 * s, f.width / 2 + 20 * s + lz * 0.15);
+    const wantPos = new THREE.Vector3(lx * 0.9, 23 * s, lz + 33 * s);
     const k = snap ? 1 : 1 - Math.exp(-dt * 3);
     this.look.lerp(wantLook, k);
     this.pos.lerp(wantPos, snap ? 1 : 1 - Math.exp(-dt * 2.2));
@@ -148,7 +47,7 @@ export class PartyRenderer {
   scene = new THREE.Scene();
   cam: PartyCamera;
   composer: EffectComposer | null = null;
-  actors: BroActor[] = [];
+  actors: AthleteActor[] = [];
   nets: GoalNet[];
   ballMesh: THREE.Mesh;
   ballShadow: THREE.Mesh;
@@ -166,20 +65,20 @@ export class PartyRenderer {
     r.shadowMap.enabled = !low;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 0.9;
+    r.toneMappingExposure = 1.0;
     r.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(r.domElement);
     this.renderer = r;
     this.cam = new PartyCamera(container.clientWidth / container.clientHeight, w.field);
 
-    this.scene.fog = new THREE.Fog(0xc9def0, 200, 600);
-    this.scene.add(makeSky());
+    this.scene.fog = new THREE.Fog(0xd5dde4, 160, 600);
+    this.scene.add(makeSky(true));
     const pm = new THREE.PMREMGenerator(r);
     this.scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.4;
+    this.scene.environmentIntensity = 0.5;
     pm.dispose();
-    this.scene.add(new THREE.HemisphereLight(0xe4f1ff, 0x3d6a32, 0.6));
-    const sun = new THREE.DirectionalLight(0xffe2bd, 2.6);
+    this.scene.add(new THREE.HemisphereLight(0xdde7f0, 0x47553a, 0.5));
+    const sun = new THREE.DirectionalLight(0xfff0dc, 2.9);
     sun.position.set(-30, 45, 35);
     sun.castShadow = true;
     const ext = w.field.length / 2 + 8;
@@ -199,12 +98,13 @@ export class PartyRenderer {
       this.composer = c;
     }
 
-    this.stadium = new Stadium(w.field, w.teams.map((t) => t.info), 0);
+    this.stadium = new Stadium(w.field, w.teams.map((t) => t.info), 0, true);
     this.scene.add(this.stadium.group);
-    this.nets = [new GoalNet(w.field, -1, BALL_P.radius + 0.03), new GoalNet(w.field, 1, BALL_P.radius + 0.03)];
+    this.nets = [new GoalNet(w.field, -1, BALL_P.radius * BALL_VIS + 0.02), new GoalNet(w.field, 1, BALL_P.radius * BALL_VIS + 0.02)];
     for (const n of this.nets) this.scene.add(n.mesh);
 
-    this.ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_P.radius, 32, 16), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.4 }));
+    // drawn a bit larger than the physics ball so it reads from the TV camera
+    this.ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_P.radius * BALL_VIS, 32, 16), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.35, emissive: 0xffffff, emissiveIntensity: 0.12 }));
     this.ballMesh.castShadow = true;
     this.scene.add(this.ballMesh);
     const sc = document.createElement('canvas');
@@ -221,7 +121,7 @@ export class PartyRenderer {
     this.scene.add(this.particles.mesh);
 
     for (const b of w.bros) {
-      const a = new BroActor(b, w);
+      const a = new AthleteActor(b, w.teams[b.team].info, b.team, w.teams[1 - b.team].info);
       this.actors.push(a);
       this.scene.add(a.root, a.stars);
     }
@@ -265,6 +165,7 @@ export class PartyRenderer {
     const bp = w.ballPos();
     const br = w.ball.rotation();
     this.ballMesh.position.copy(bp);
+    this.ballMesh.position.y += BALL_P.radius * (BALL_VIS - 1);
     this.ballMesh.quaternion.set(br.x, br.y, br.z, br.w);
     const hgt = Math.max(0, bp.y - BALL_P.radius);
     const s = BALL_P.radius * 2.6 * (1 + hgt * 0.2);

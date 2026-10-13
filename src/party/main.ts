@@ -1,7 +1,7 @@
 import '../ui/style.css';
 import * as THREE from 'three';
 import { Sound } from '../audio/sound';
-import { loadCharacters } from '../render/players';
+import { loadAthlete } from './athlete';
 import { settings, Quality } from '../settings';
 import { TEAM_PRESETS } from '../sim/team';
 import type { TeamSize } from '../sim/config';
@@ -341,7 +341,7 @@ async function boot() {
   uiEl.appendChild(loading);
   const bar = loading.querySelector('.bar div') as HTMLDivElement;
   try {
-    await loadCharacters((f) => (bar.style.width = `${Math.round(f * 100)}%`));
+    await loadAthlete((f) => (bar.style.width = `${Math.round(f * 100)}%`));
   } catch (e) {
     loading.textContent = `Не удалось загрузить: ${(e as Error).message}`.slice(0, 200);
     return;

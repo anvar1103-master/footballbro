@@ -74,5 +74,6 @@ npm run dev      # открыть http://localhost:5173
 - Карта проекта — в [CLAUDE.md](CLAUDE.md)
 
 ## Ассеты
-- Персонажи: [Kenney Mini Characters](https://kenney.nl/assets/mini-characters) (CC0)
+- Footballbro: персонаж «X Bot» из [Adobe Mixamo](https://www.mixamo.com) (из примеров three.js), форма раскрашивается кодом
+- Soccerbro: [Kenney Mini Characters](https://kenney.nl/assets/mini-characters) (CC0)
 - Стадион, мяч, сетка, звуки — процедурные (генерируются кодом)

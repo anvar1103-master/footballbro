@@ -79,7 +79,7 @@ export class PWorld {
     cm('ball', 'wall', 0.2, 0.55);
     cm('ball', 'post', 0.1, 0.7);
     cm('ball', 'net', 0.9, 0.0);
-    cm('ball', 'bro', 0.3, 0.35);
+    cm('ball', 'bro', 0.3, 0.12); // soft first touch
     cm('bro', 'ground', 0, 0.05); // feet don't grip: locomotion is impulse-driven (grip would trip them)
     cm('bro', 'wall', 0.1, 0.2);
     cm('bro', 'bro', 0.2, 0.25);

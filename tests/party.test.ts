@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { Vector3 } from 'three';
 import { PartyWorld, PARTY_DT, NO_INPUT, PartyInput } from '../src/party/world';
 
 async function world(seed = 3, human = -1) {
@@ -76,6 +77,40 @@ describe('party football', () => {
     expect(w.setPiece?.kind).toBe('throwin');
     run(w, 6);
     expect(w.phase).toBe('play');
+  });
+
+  it('the ball sticks to a dribbling bro and ground passes reach the mate', async () => {
+    const w = await world(2, 0);
+    run(w, 1.3);
+    (w as unknown as { phase: string }).phase = 'play';
+    w.setPiece = null;
+    const c = w.controlled!;
+    const others = w.bros.filter((b) => b !== c);
+    const park = () => others.forEach((b, i) => b.teleport(-20 + i, -14, 1));
+    c.teleport(0, 0, 1);
+    w.ball.setTranslation({ x: 0.8, y: 0.16, z: 0 }, true);
+    w.ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    let held = 0, n = 0;
+    for (let t = 0; t < 3; t += PARTY_DT) {
+      w.step(PARTY_DT, { ...NO_INPUT, mx: Math.cos(t * 1.2), my: Math.sin(t * 1.2) * 0.8 });
+      park();
+      n++;
+      if (w.holder === c) held++;
+    }
+    expect(held / n).toBeGreaterThan(0.9);
+    // a ground pass over 20 m arrives with pace
+    c.teleport(0, 0, 1);
+    c.face.set(1, 0, 0);
+    w.ball.setTranslation({ x: 0.8, y: 0.16, z: 0 }, true);
+    w.ball.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    w.kick(c, 0.3, new Vector3(21, 0, 0), 0, 0, true);
+    let vAt20 = 0;
+    for (let t = 0; t < 4 && !vAt20; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park();
+      if (w.ballPos().x > 20) vAt20 = w.ballVel().length();
+    }
+    expect(vAt20).toBeGreaterThan(4);
   });
 
   it('an AI match produces goals and no NaN', async () => {
