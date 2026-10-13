@@ -80,6 +80,18 @@ export class Bro {
   grabCd = 0;
   /** jumping for joy after a goal */
   celebrate = false;
+  /** what the current kick animation is, and with which foot (+1 = left, -1 = right) */
+  kickKind: 'shot' | 'pass' | 'lob' | 'volley' | 'bicycle' | 'header' = 'shot';
+  kickSide = -1;
+  /** skill move being played (animation + protection of the ball) */
+  skill: { kind: 'rainbow' | 'cut' | 'turn'; t: number; side: number } | null = null;
+  skillCd = 0;
+  /** fooled by a skill move: wrong-footed for a moment */
+  fooled = 0;
+  /** keeper catch cooldown */
+  catchCd = 0;
+  /** after a bicycle kick the player lands on his back */
+  landT = -1;
 
   constructor(
     world: PWorld,
@@ -168,10 +180,24 @@ export class Bro {
     this.jumpCd -= dt;
     this.shoveCd -= dt;
     this.grabCd -= dt;
+    this.skillCd -= dt;
+    this.catchCd -= dt;
+    this.fooled = Math.max(0, this.fooled - dt);
+    if (this.skill) {
+      this.skill.t += dt;
+      if (this.skill.t > 0.55) this.skill = null;
+    }
+    if (this.landT >= 0) {
+      this.landT += dt;
+      if (this.landT > 0.45 && this.grounded) {
+        this.landT = -1;
+        this.knockDown(0.7);
+      }
+    }
     this.dizzy = Math.max(0, this.dizzy - dt);
     if (this.kickT >= 0) {
       this.kickT += dt;
-      if (this.kickT > 0.45) this.kickT = -1;
+      if (this.kickT > (this.kickKind === 'bicycle' ? 0.7 : 0.45)) this.kickT = -1;
     }
     if (this.shoveT >= 0) {
       this.shoveT += dt;

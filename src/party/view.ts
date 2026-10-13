@@ -8,7 +8,8 @@ import { Particles } from '../render/effects';
 import { GoalNet } from '../render/net';
 import type { Quality } from '../settings';
 import { Arena } from './arena';
-import { BeanActor, makeCrown } from './bean';
+import { DudeActor, makeCrown } from './dude';
+import { ballTexture } from '../render/ball';
 import { ARENA, PartyEvent, PartyWorld } from './world';
 
 /** bright sky dome: deep blue on top, pale at the horizon, pastel below the island */
@@ -26,33 +27,7 @@ function makeSky() {
   return new THREE.Mesh(new THREE.SphereGeometry(900, 32, 16), mat);
 }
 
-function ballTexture() {
-  const c = document.createElement('canvas');
-  c.width = 512;
-  c.height = 256;
-  const g = c.getContext('2d')!;
-  g.fillStyle = '#ffffff';
-  g.fillRect(0, 0, 512, 256);
-  const cols = ['#ff3b6b', '#ffd23f', '#3bc8ff', '#7b5cff', '#3ee07a'];
-  // big friendly stars
-  for (let i = 0; i < 10; i++) {
-    const cx = (i % 5) * 102 + (i >= 5 ? 51 : 0) + 26, cy = i >= 5 ? 185 : 70;
-    g.fillStyle = cols[i % cols.length];
-    g.beginPath();
-    for (let k = 0; k < 10; k++) {
-      const r = k % 2 ? 16 : 38, a = (k / 10) * Math.PI * 2 - Math.PI / 2;
-      g.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.9);
-    }
-    g.fill();
-  }
-  g.fillStyle = '#ff3b6b';
-  g.fillRect(0, 120, 512, 14);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-
-/** Third-person chase camera behind the human's bean, looking down-field (or a TV view). */
+/** Third-person chase camera behind the human's player, looking down-field (or a TV view). */
 export class ChaseCamera {
   camera: THREE.PerspectiveCamera;
   /** 0 = close behind, 1 = high behind, 2 = TV side view */
@@ -97,7 +72,7 @@ export class ChaseCamera {
       const up = (this.mode === 0 ? 4.2 : 8.5) + extra * 0.6;
       const lift = Math.min(3, Math.max(0, ball.y - 3) * 0.4);
       wantPos = target.clone().addScaledVector(f, -back).setY(up + lift);
-      // look between the bean and the ball
+      // look between the player and the ball
       const toward = rel.clampLength(0, 9).multiplyScalar(0.4);
       wantLook = target.clone().addScaledVector(f, 3.5).add(toward).setY(1 + lift * 0.5);
       this.camera.fov = 55;
@@ -116,7 +91,7 @@ export class PartyRenderer {
   scene = new THREE.Scene();
   cam: ChaseCamera;
   composer: EffectComposer | null = null;
-  actors: BeanActor[] = [];
+  actors: DudeActor[] = [];
   nets: GoalNet[];
   ballMesh: THREE.Mesh;
   ballShadow: THREE.Mesh;
@@ -175,7 +150,7 @@ export class PartyRenderer {
     this.nets = [new GoalNet(ARENA, -1, w.ballR), new GoalNet(ARENA, 1, w.ballR)];
     for (const n of this.nets) this.scene.add(n.mesh);
 
-    this.ballMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 24), new THREE.MeshPhysicalMaterial({ map: ballTexture(), roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.15 }));
+    this.ballMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 24), new THREE.MeshPhysicalMaterial({ map: ballTexture(), roughness: 0.35, clearcoat: 0.8, clearcoatRoughness: 0.2 }));
     this.ballMesh.castShadow = true;
     this.scene.add(this.ballMesh);
     // soft blob under the ball: tells you where it will land
@@ -193,11 +168,11 @@ export class PartyRenderer {
     this.scene.add(this.particles.mesh);
 
     for (const b of w.bros) {
-      const a = new BeanActor(b, w.teams[b.team].info);
+      const a = new DudeActor(b, w.teams[b.team].info, w.teams[1 - b.team].info);
       this.actors.push(a);
       this.scene.add(a.root, a.stars);
     }
-    // ring under your bean
+    // ring under your player
     this.marker = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 40), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.85, depthWrite: false }));
     this.marker.rotation.x = -Math.PI / 2;
     this.scene.add(this.marker);
@@ -258,7 +233,7 @@ export class PartyRenderer {
     if (c) {
       this.marker.position.set(focus.x, 0.04, focus.z);
       this.marker.scale.setScalar(1 + Math.sin(this.time * 5) * 0.06);
-      // the crown flies over to the bean you switched to
+      // the crown flies over to the player you switched to
       const want = focus.clone().add(new THREE.Vector3(0, 1.32 + Math.sin(this.time * 3) * 0.06, 0));
       if (this.crownPos.lengthSq() === 0) this.crownPos.copy(want);
       this.crownPos.lerp(want, 1 - Math.exp(-dt * 12));

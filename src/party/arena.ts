@@ -4,7 +4,7 @@ import { ARENA } from './world';
 
 /**
  * The sky arena: a candy-coloured pitch on a floating rock island, inflatable striped walls,
- * chunky goals, balloons, clouds, mini islands and a stand of cheering spectator beans.
+ * chunky goals, balloons, clouds, mini islands and a stand of cheering spectators.
  */
 
 /** bands across v (along a tube / cylinder) */
@@ -207,7 +207,7 @@ export class Arena {
       const col = dir < 0 ? ca : cb;
       const tex = candyTexture('#ffffff', col, 10);
       const mat = new THREE.MeshPhysicalMaterial({ map: tex, roughness: 0.3, clearcoat: 1 });
-      const r = 0.15, x0 = dir * L;
+      const r = 0.1, x0 = dir * L;
       for (const sz of [-1, 1]) {
         const post = new THREE.Mesh(new THREE.CylinderGeometry(r, r, ARENA.goalH + r, 16), mat);
         post.position.set(x0, (ARENA.goalH + r) / 2, sz * (ARENA.goalHalfW + r));
@@ -244,7 +244,7 @@ export class Arena {
     this.sweeper.visible = false;
     this.group.add(this.sweeper);
 
-    // spectator beans on two floating stands
+    // spectators on two floating stands
     const N = 160;
     this.crowd = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.4, 0.6, 4, 10), new THREE.MeshStandardMaterial({ roughness: 0.5 }), N);
     this.crowd.castShadow = false;

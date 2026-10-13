@@ -17,29 +17,30 @@ export const GRAVITY = -11.5;
 
 /** arena (metres). Also a FieldDims so the classic GoalNet can be reused. */
 export const ARENA: FieldDims & { wallH: number; corner: number } = {
-  length: 46,
-  width: 30,
-  goalHalfW: 3.6,
-  goalH: 3.0,
-  goalDepthTop: 1.8,
-  goalDepthBottom: 2.4,
+  length: 50,
+  width: 32,
+  goalHalfW: 3.0,
+  goalH: 2.4,
+  goalDepthTop: 1.5,
+  goalDepthBottom: 2.0,
   boxDepth: 8,
   boxHalfW: 8,
   smallBoxDepth: 3,
   smallBoxHalfW: 5,
   penaltySpot: 6,
-  centerRadius: 4.5,
+  centerRadius: 5,
   boardMargin: 0,
   wallH: 1.4,
   corner: 4,
 };
 
 export const BALL_P = {
-  radius: 0.5,
-  mass: 0.9,
-  dragK: 0.011,
-  magnusK: 0.002,
-  rollC: 0.55,
+  radius: 0.17,
+  mass: 0.43,
+  dragK: 0.009,
+  /** Magnus: a = magnusK * (spin × v) — curled shots */
+  magnusK: 0.004,
+  rollC: 0.7,
 };
 
 export interface PartyInput {
@@ -53,14 +54,16 @@ export interface PartyInput {
   lob: boolean;
   tackle: boolean;
   grab: boolean;
-  /** switch to another bean of your team */
+  /** switch to another player of your team */
   switch: boolean;
+  /** skill move (feint) */
+  skill: boolean;
 }
-export const NO_INPUT: PartyInput = { mx: 0, mz: 0, sprint: false, jump: false, kick: false, pass: false, lob: false, tackle: false, grab: false, switch: false };
+export const NO_INPUT: PartyInput = { mx: 0, mz: 0, sprint: false, jump: false, kick: false, pass: false, lob: false, tackle: false, grab: false, switch: false, skill: false };
 
 export type EventKind = 'mega' | 'lowgrav' | 'ice' | 'turbo' | 'sweeper';
 export const EVENT_INFO: Record<EventKind, { title: string; sub: string }> = {
-  mega: { title: 'МЕГА-МЯЧ!', sub: 'мяч вырос в два раза' },
+  mega: { title: 'МЕГА-МЯЧ!', sub: 'надувной мяч-великан' },
   lowgrav: { title: 'ЛУНА!', sub: 'низкая гравитация' },
   ice: { title: 'ГОЛОЛЁД!', sub: 'держись на ногах' },
   turbo: { title: 'ТУРБО!', sub: 'все носятся как угорелые' },
@@ -68,7 +71,7 @@ export const EVENT_INFO: Record<EventKind, { title: string; sub: string }> = {
 };
 
 export interface PartyEvent {
-  type: 'switch' | 'kick' | 'bounce' | 'post' | 'net' | 'wall' | 'goal' | 'bonk' | 'whistle' | 'tackle' | 'grab' | 'header' | 'event' | 'eventEnd' | 'countdown' | 'drop' | 'golden' | 'over';
+  type: 'switch' | 'skill' | 'save' | 'catch' | 'volley' | 'bicycle' | 'kick' | 'bounce' | 'post' | 'net' | 'wall' | 'goal' | 'bonk' | 'whistle' | 'tackle' | 'grab' | 'header' | 'event' | 'eventEnd' | 'countdown' | 'drop' | 'golden' | 'over';
   pos?: Vector3;
   strength?: number;
   team?: number;
@@ -136,13 +139,17 @@ export class PartyWorld {
   /** render-time slow motion request (seconds left) */
   slowmo = 0;
   /** human buffered actions: fire as soon as the ball is in reach */
-  buffer: { kind: 'kick' | 'pass' | 'lob'; power: number; t: number } | null = null;
+  buffer: { kind: 'kick' | 'pass' | 'lob'; power: number; t: number; aim: Vector3 } | null = null;
+  /** a keeper holding the ball */
+  gkHold: { gk: Bro; t: number } | null = null;
   private prevInput: PartyInput = { ...NO_INPUT };
   private lastBallVy = 0;
   private cds = { net: 0, post: 0, wall: 0 };
   private bodyMap = new Map<unknown, Bro>();
   private pendingHits: { bro: Bro; speed: number }[] = [];
   private lastCount = 4;
+  /** the human's last stick direction (world), used to aim headers */
+  lastAim = new Vector3();
 
   constructor(public opts: WorldOpts) {
     this.rng = new Rng(opts.seed ?? (Date.now() & 0xffff));
@@ -183,7 +190,7 @@ export class PartyWorld {
     // goals: chunky posts and soft net boxes
     for (const dir of [-1, 1]) {
       const x0 = dir * L;
-      const r = 0.15;
+      const r = 0.1;
       W.cylinder('post', r, f.goalH / 2, x0, f.goalH / 2, -f.goalHalfW - r);
       W.cylinder('post', r, f.goalH / 2, x0, f.goalH / 2, f.goalHalfW + r);
       W.cylinder('post', r, f.goalHalfW + r, x0, f.goalH + r, 0, true);
@@ -271,7 +278,7 @@ export class PartyWorld {
     const mates = this.teamBros(b.team);
     const i = mates.indexOf(b);
     const n = mates.length;
-    if (i === 0) return new Vector3(-t.dir * (ARENA.length / 2 - 4), 0, 0);
+    if (i === 0) return new Vector3(-t.dir * (ARENA.length / 2 - 1.2), 0, 0);
     const k = n - 1;
     const z = k === 1 ? 0 : -9 + (18 * (i - 1)) / (k - 1);
     const x = -t.dir * (i % 2 === 1 ? 5 : 10);
@@ -284,6 +291,7 @@ export class PartyWorld {
     this.lastCount = 4;
     this.holder = null;
     this.buffer = null;
+    this.gkHold = null;
     for (const b of this.bros) {
       const s = this.spotFor(b);
       b.teleport(s.x, s.z, this.teams[b.team].dir);
@@ -360,6 +368,7 @@ export class PartyWorld {
     this.pendingHits.length = 0;
     this.world.step(dt);
     this.afterHits();
+    this.keeperCatch(dt);
     this.bodyCollisions();
     this.ballEvents();
     if (this.phase === 'play') this.checkBall();
@@ -395,7 +404,7 @@ export class PartyWorld {
     this.endChaos();
     this.chaos = { kind, t: 0, dur: kind === 'sweeper' ? 18 : 14 };
     this.lastChaos = kind;
-    if (kind === 'mega') this.setBallRadius(1.0, 1.6);
+    if (kind === 'mega') this.setBallRadius(0.75, 1.0);
     if (kind === 'lowgrav') this.setGravity(-4.2);
     if (kind === 'sweeper') {
       this.sweeper.on = true;
@@ -493,25 +502,30 @@ export class PartyWorld {
     this.ball.applyImpulse({ x: fx * m * dt, y: fy * m * dt, z: fz * m * dt }, true);
   }
 
-  /** dribbling: the ball sticks (loosely) in front of the bean who runs it along */
+  /**
+   * Dribbling: the ball stays at the feet of the player who runs it along — tight when jogging,
+   * knocked further ahead when sprinting (easier to lose), rhythm follows the stride.
+   */
   private dribbleAssist(dt: number) {
     const bp = this.ballPos();
-    if (bp.y > this.ballR + 0.5) {
-      this.holder = null;
+    if (bp.y > this.ballR + 0.45 || this.gkHold) {
+      if (!this.gkHold) this.holder = null;
       return;
     }
     const bv = this.ballVel();
     let best: Bro | null = null;
     let bd = 1e9;
     const reachBase = BRO.radius + this.ballR;
+    const protectedBy = this.holder?.skill && this.holder.skill.t < 0.45 ? this.holder : null;
     for (const b of this.bros) {
-      if (!b.canAct || b.kickT >= 0 || this.grabbedBy(b)) continue;
+      if (!b.canAct || b.kickT >= 0 || this.grabbedBy(b) || b.fooled > 0) continue;
+      if (protectedBy && b !== protectedBy) continue;
       const p = b.position();
       const dx = bp.x - p.x, dz = bp.z - p.z;
       const d = Math.hypot(dx, dz);
       const front = (dx * b.face.x + dz * b.face.z) / (d || 1);
       const mine = b === this.holder;
-      if (d < reachBase + (mine ? 1.0 : 0.55) && front > (mine ? -0.3 : 0.3)) {
+      if (d < reachBase + (mine ? 1.0 : 0.55) && front > (mine ? -0.3 : 0.25)) {
         const score = d - (mine ? 0.45 : 0);
         if (score < bd) {
           bd = score;
@@ -525,12 +539,14 @@ export class PartyWorld {
     const p = best.position();
     const v = best.velocity();
     const human = best === this.controlled;
-    const off = reachBase + 0.12 + Math.min(0.4, best.speed * 0.04);
+    const sprint = best.intent.sprint && best.speed > 6;
+    // touch rhythm: the ball rolls a little ahead and the player catches it up
+    const off = reachBase + (sprint ? 0.55 : 0.2) + 0.1 * Math.sin(best.phase * 2);
     const tx = p.x + best.face.x * off, tz = p.z + best.face.z * off;
-    const k = human ? 7 : 5.5;
+    const k = sprint ? 6 : human ? 10 : 8;
     const wantX = v.x + (tx - bp.x) * k, wantZ = v.z + (tz - bp.z) * k;
     const m = this.ball.mass();
-    const blend = Math.min(1, dt * (human ? 14 : 10));
+    const blend = Math.min(1, dt * (sprint ? 9 : human ? 16 : 12));
     this.ball.applyImpulse({ x: (wantX - bv.x) * m * blend, y: 0, z: (wantZ - bv.z) * m * blend }, true);
     this.lastTouch = best;
   }
@@ -541,12 +557,17 @@ export class PartyWorld {
       const b = h.bro;
       const bp = this.ballPos();
       const p = b.position();
-      if (!b.grounded && b.state === 'up' && bp.y > p.y + 0.2) {
-        // header: nod it towards the goal
+      if (!b.grounded && b.state === 'up' && bp.y > p.y + 0.45 && b.kickT < 0) {
+        // header: nod it where the player aims (towards the goal by default)
         const gx = this.goalX(b.team);
-        const d = new Vector3(gx - bp.x, 0, -bp.z * 0.5).normalize();
+        const toGoal = new Vector3(gx - bp.x, 0, this.rng.range(-1, 1) * (ARENA.goalHalfW - 0.6) - bp.z).normalize();
+        const aim = b === this.controlled && this.lastAim.lengthSq() > 0.1 ? this.lastAim.clone() : toGoal;
+        const d = aim.dot(toGoal) > 0.6 ? toGoal : aim;
         const v = this.ballVel();
-        this.ball.setLinvel({ x: v.x * 0.3 + d.x * 11, y: Math.max(v.y, 3.5), z: v.z * 0.3 + d.z * 11 });
+        this.ball.setLinvel({ x: v.x * 0.2 + d.x * 13, y: Math.max(1.5, Math.min(v.y, 3)), z: v.z * 0.2 + d.z * 13 });
+        b.kickKind = 'header';
+        b.kickT = 0;
+        this.lastTouch = b;
         this.emit({ type: 'header', pos: bp, team: b.team, strength: 10 });
       } else if (h.speed > 13 && b.state === 'up' && b.kickT < 0) {
         b.knockDown(1.1);
@@ -691,58 +712,123 @@ export class PartyWorld {
     for (const b of this.bros) {
       if (b.grabbing) b.speedMul *= 0.6;
       if (this.grabbedBy(b)) b.speedMul *= 0.35;
+      if (b.fooled > 0) b.speedMul *= 0.35;
     }
   }
 
   // ---------------- actions ----------------
-  /** can `b` strike the ball right now? */
+  /** can `b` play the ball right now? */
   inReach(b: Bro) {
-    if (!b.canAct) return false;
+    if (!b.canAct && !(b.state === 'up' || this.gkHold?.gk === b)) return false;
+    if (this.gkHold) return this.gkHold.gk === b;
     const bp = this.ballPos();
     const p = b.position();
     const dx = bp.x - p.x, dz = bp.z - p.z;
     const d = Math.hypot(dx, dz);
     const front = (dx * b.face.x + dz * b.face.z) / (d || 1);
-    return d < BRO.radius + this.ballR + 0.95 && (front > -0.1 || d < BRO.radius + this.ballR + 0.3) && bp.y < 2.4;
+    return d < BRO.radius + this.ballR + 0.85 && (front > -0.1 || d < BRO.radius + this.ballR + 0.3) && bp.y < 2.6;
   }
 
   /** strike the ball with velocity `vel` (world). Returns false on a whiff. */
-  private strike(b: Bro, vel: Vector3, spinY = 0, roll = false) {
+  private strike(b: Bro, vel: Vector3, kind: Bro['kickKind'], spin = new Vector3(), roll = false) {
     b.kickT = 0;
+    b.kickKind = kind;
     if (!this.inReach(b)) return false;
+    if (this.gkHold?.gk === b) this.gkHold = null;
     const turbo = this.chaos?.kind === 'turbo' ? 1.2 : 1;
     vel.x *= turbo;
     vel.z *= turbo;
     const bp = this.ballPos();
+    const p = b.position();
+    // which foot: the one on the ball's side
+    b.kickSide = (bp.x - p.x) * b.face.z - (bp.z - p.z) * b.face.x > 0 ? -1 : 1;
     // lift the ball off the ground a touch so it does not scrape
-    if (bp.y < this.ballR + 0.05) this.ball.setTranslation({ x: bp.x, y: this.ballR + 0.05, z: bp.z });
+    if (bp.y < this.ballR + 0.03) this.ball.setTranslation({ x: bp.x, y: this.ballR + 0.03, z: bp.z });
     this.ball.setLinvel({ x: vel.x, y: vel.y, z: vel.z }, true);
     const h = Math.hypot(vel.x, vel.z) || 1;
-    const r = roll ? h / this.ballR : 4;
-    this.ball.setAngvel({ x: (vel.z / h) * r, y: spinY, z: (-vel.x / h) * r }, true);
+    if (roll) this.ball.setAngvel({ x: (vel.z / h) * (h / this.ballR), y: 0, z: (-vel.x / h) * (h / this.ballR) }, true);
+    else this.ball.setAngvel({ x: spin.x, y: spin.y, z: spin.z }, true);
     this.holder = null;
     this.lastTouch = b;
-    this.emit({ type: 'kick', pos: bp, strength: Math.hypot(vel.x, vel.y, vel.z), team: b.team });
+    const kindEvent = kind === 'volley' || kind === 'bicycle' ? kind : 'kick';
+    this.emit({ type: kindEvent, pos: bp, strength: Math.hypot(vel.x, vel.y, vel.z), team: b.team });
+    if (kindEvent !== 'kick') this.emit({ type: 'kick', pos: bp, strength: Math.hypot(vel.x, vel.y, vel.z), team: b.team });
     return true;
   }
 
-  /** shot: towards the goal when roughly facing it (aim assist), else straight ahead */
-  shoot(b: Bro, power: number, aimZ?: number) {
+  /**
+   * Shot along `aim` (world, horizontal). When it points at the goal the shot is steered into the
+   * frame; aiming just wide of a post curls it back in (finesse). Power = pace and height.
+   */
+  shootAt(b: Bro, power: number, aim: Vector3, kind: Bro['kickKind'] = 'shot') {
     const bp = this.ballPos();
     const gx = this.goalX(b.team);
-    const toGoal = new Vector3(gx - bp.x, 0, (aimZ ?? 0) - bp.z);
-    const dist = toGoal.length();
-    toGoal.normalize();
-    let dir = b.face.clone();
-    if (dir.dot(toGoal) > 0.35 || aimZ !== undefined) {
-      const z = aimZ ?? this.rng.range(-1, 1) * (ARENA.goalHalfW - 1.0);
-      dir = new Vector3(gx - bp.x, 0, z - bp.z).normalize();
+    let dir = aim.clone().setY(0).normalize();
+    if (dir.lengthSq() < 0.5) dir = b.face.clone();
+    const speed = 15 + power * 17;
+    let curl = 0;
+    let dist = 20;
+    const lim = ARENA.goalHalfW - 0.4;
+    if (Math.sign(dir.x) === Math.sign(gx - bp.x) && Math.abs(dir.x) > 0.25) {
+      const tLine = (gx - bp.x) / dir.x;
+      const zHit = bp.z + dir.z * tLine;
+      dist = Math.hypot(gx - bp.x, zHit - bp.z);
+      if (Math.abs(zHit) < lim + 6) {
+        // aim assist into the frame; wide aims become curlers
+        const zIn = Math.max(-lim, Math.min(lim, zHit));
+        const out = Math.abs(zHit) > lim + 0.5;
+        const bend = out ? Math.min(2.2, 0.6 + dist * 0.06) : 0;
+        const zAim = zIn + Math.sign(zHit) * bend;
+        dir = new Vector3(gx - bp.x, 0, zAim - bp.z).normalize();
+        if (out) {
+          const tf = dist / (speed * 0.9);
+          const acc = (2 * bend) / (tf * tf);
+          const left = new Vector3(-dir.z, 0, dir.x);
+          // bend back towards the frame: accelerate opposite to the side we aimed at
+          const s = Math.sign(left.z * Math.sign(zHit)) || 1;
+          curl = (s * acc) / (BALL_P.magnusK * speed);
+        }
+      }
     }
-    // clumsiness
-    dir.applyAxisAngle(new Vector3(0, 1, 0), this.rng.gauss() * (0.02 + 0.05 * power));
-    const speed = 13 + power * 15;
-    const lift = Math.min(0.32, 0.1 + 0.2 * power + (dist > 20 ? 0.06 : 0));
-    return this.strike(b, dir.multiplyScalar(speed).setY(speed * lift), this.rng.range(-6, 6));
+    // clumsiness grows with power
+    dir.applyAxisAngle(new Vector3(0, 1, 0), this.rng.gauss() * (0.012 + 0.03 * power * power));
+    // height: crosses the line between knee and bar height, higher when blasted
+    const t = Math.max(0.15, dist / speed);
+    const g = -this.gravity;
+    const wantH = 0.35 + power * 1.25 + this.rng.gauss() * 0.25 * power * power;
+    const vy = Math.max(0.5, (wantH - bp.y + 0.5 * g * t * t) / t);
+    const v = dir.multiplyScalar(speed).setY(vy);
+    const h = Math.hypot(v.x, v.z);
+    const top = new Vector3((v.z / h) * 6, curl, (-v.x / h) * 6);
+    return this.strike(b, v, kind, top);
+  }
+
+  /** shot with the default aim: straight at the goal (AI) */
+  shoot(b: Bro, power: number, aimZ?: number) {
+    const bp = this.ballPos();
+    const z = aimZ ?? this.rng.range(-1, 1) * (ARENA.goalHalfW - 0.6);
+    return this.shootAt(b, power, new Vector3(this.goalX(b.team) - bp.x, 0, z - bp.z));
+  }
+
+  /** human kick: picks volley / bicycle kick / shot from the ball height and the body angle */
+  smartKick(b: Bro, power: number, aim: Vector3) {
+    const bp = this.ballPos();
+    const p = b.position();
+    const gx = this.goalX(b.team);
+    const toGoal = new Vector3(gx - bp.x, 0, -bp.z).normalize();
+    const hb = bp.y - this.ballR;
+    const facingGoal = b.face.dot(toGoal);
+    if (hb > 0.9 && hb < 2.4 && facingGoal < 0.1 && Math.hypot(bp.x - p.x, bp.z - p.z) < 1.5) {
+      // overhead bicycle kick: flip, strike towards the goal, land on the back
+      const ok = this.shootAt(b, Math.max(0.7, power), toGoal, 'bicycle');
+      if (ok) {
+        b.body.applyImpulse({ x: 0, y: BRO.mass * 4.2, z: 0 }, true);
+        b.landT = 0;
+      }
+      return ok;
+    }
+    if (hb > 0.25) return this.shootAt(b, Math.max(0.5, power), aim, 'volley');
+    return this.shootAt(b, power, aim);
   }
 
   /** ground pass to a mate, leading his run */
@@ -751,32 +837,35 @@ export class PartyWorld {
     const q = mate.position();
     const mv = mate.velocity();
     let d = Math.hypot(q.x - bp.x, q.z - bp.z);
-    const arrive = 4.5;
+    const arrive = 5;
     let v = Math.sqrt(arrive * arrive + 2 * BALL_P.rollC * d);
     const lead = d / Math.max(6, v);
     const tx = q.x + mv.x * lead * 0.8, tz = q.z + mv.z * lead * 0.8;
     d = Math.hypot(tx - bp.x, tz - bp.z);
-    v = Math.min(24, Math.sqrt(arrive * arrive + 2 * BALL_P.rollC * d) * (1 + BALL_P.dragK * d * 0.6));
+    v = Math.min(26, Math.sqrt(arrive * arrive + 2 * BALL_P.rollC * d) * (1 + BALL_P.dragK * d * 0.5));
     const dir = new Vector3(tx - bp.x, 0, tz - bp.z).normalize();
-    dir.applyAxisAngle(new Vector3(0, 1, 0), this.rng.gauss() * 0.03);
-    return this.strike(b, dir.multiplyScalar(v).setY(0.5), 0, true);
+    dir.applyAxisAngle(new Vector3(0, 1, 0), this.rng.gauss() * 0.02);
+    const airborne = bp.y > this.ballR + 0.3;
+    return this.strike(b, dir.multiplyScalar(v).setY(airborne ? 1 : 0.3), 'pass', undefined, !airborne);
   }
 
   /** lofted ball (cross / chip) landing at `target` */
   lob(b: Bro, target: Vector3) {
     const bp = this.ballPos();
     const d = Math.max(3, Math.hypot(target.x - bp.x, target.z - bp.z));
-    const T = 0.55 + d / 19;
+    const T = 0.6 + d / 17;
     const g = -this.gravity;
     const vy = (g * T) / 2;
-    const vh = (d / T) * (1 + BALL_P.dragK * d * 0.5);
+    const vh = (d / T) * (1 + BALL_P.dragK * d * 0.55);
     const dir = new Vector3(target.x - bp.x, 0, target.z - bp.z).normalize();
-    dir.applyAxisAngle(new Vector3(0, 1, 0), this.rng.gauss() * 0.04);
-    return this.strike(b, dir.multiplyScalar(vh).setY(vy), 0);
+    dir.applyAxisAngle(new Vector3(0, 1, 0), this.rng.gauss() * 0.03);
+    const v = dir.multiplyScalar(vh).setY(vy);
+    // backspin so it sits down
+    return this.strike(b, v, 'lob', new Vector3(-dir.z * -8, 0, dir.x * -8));
   }
 
-  /** teammate `b` would pass to: in the facing cone, otherwise the best-placed one */
-  bestMate(b: Bro, ahead = false) {
+  /** teammate `b` would pass to: in the `dir` cone (default facing), otherwise the best-placed one */
+  bestMate(b: Bro, ahead = false, dir: Vector3 = b.face) {
     const p = b.position();
     let best: Bro | null = null;
     let bs = -1e9;
@@ -786,7 +875,7 @@ export class PartyWorld {
       const dx = qp.x - p.x, dz = qp.z - p.z;
       const dist = Math.hypot(dx, dz);
       if (dist < 2.5) continue;
-      const cos = (dx * b.face.x + dz * b.face.z) / dist;
+      const cos = (dx * dir.x + dz * dir.z) / dist;
       const fwd = (qp.x - p.x) * this.teams[b.team].dir;
       // is an opponent standing in the lane?
       let blocked = 0;
@@ -795,9 +884,9 @@ export class PartyWorld {
         const t = ((op.x - p.x) * dx + (op.z - p.z) * dz) / (dist * dist);
         if (t < 0.1 || t > 0.95) continue;
         const px = p.x + dx * t, pz = p.z + dz * t;
-        if (Math.hypot(op.x - px, op.z - pz) < 1.3) blocked++;
+        if (Math.hypot(op.x - px, op.z - pz) < 1.2) blocked++;
       }
-      const s = cos * 3 + (ahead ? fwd * 0.12 : 0) - dist * 0.04 - blocked * (ahead ? 0.5 : 2);
+      const s = cos * 3 + (ahead ? fwd * 0.12 : 0) - dist * 0.04 - blocked * (ahead ? 0.5 : 2) - (q.role === 'GK' ? 2 : 0);
       if (s > bs) {
         bs = s;
         best = q;
@@ -806,18 +895,129 @@ export class PartyWorld {
     return best;
   }
 
-  /** where a lob goes: the most advanced mate ahead, or the far post when near the goal */
-  lobTarget(b: Bro) {
+  /** where a lob goes: a chip over the keeper near the goal, else the most advanced mate ahead */
+  lobTarget(b: Bro, dir: Vector3 = b.face) {
     const p = b.position();
     const gx = this.goalX(b.team);
-    const dir = this.teams[b.team].dir;
-    if (Math.abs(gx - p.x) < 14) return new Vector3(gx - dir * 3.5, 0, -Math.sign(p.z || 1) * 2);
-    const m = this.bestMate(b, true);
+    const tdir = this.teams[b.team].dir;
+    const toGoal = new Vector3(gx - p.x, 0, -p.z);
+    if (toGoal.length() < 24 && dir.dot(toGoal.normalize()) > 0.5) {
+      // chip: drop it just under the bar
+      return new Vector3(gx + tdir * 0.6, 0, Math.max(-ARENA.goalHalfW + 0.8, Math.min(ARENA.goalHalfW - 0.8, p.z * 0.3)));
+    }
+    if (Math.abs(gx - p.x) < 14) return new Vector3(gx - tdir * 4, 0, -Math.sign(p.z || 1) * 2);
+    const m = this.bestMate(b, true, dir);
     if (m) {
       const q = m.position();
-      return new Vector3(q.x + dir * 2.5, 0, q.z);
+      return new Vector3(q.x + tdir * 2.5, 0, q.z);
     }
-    return p.clone().addScaledVector(b.face, 18);
+    return p.clone().addScaledVector(dir, 18);
+  }
+
+  /**
+   * Skill moves for the player on the ball (stick direction relative to where he faces):
+   * forward / none → rainbow flick over his own head; sideways → step-over and a sharp cut;
+   * back → drag-back turn. Defenders close by are wrong-footed.
+   */
+  doSkill(b: Bro, dirIn: Vector3) {
+    if (this.holder !== b || b.skillCd > 0 || !b.canAct) return false;
+    const f = b.face.clone();
+    const dl = dirIn.length();
+    const fwd = dl > 0.3 ? f.dot(dirIn) / dl : 1;
+    const side = dl > 0.3 ? (f.x * dirIn.z - f.z * dirIn.x) / dl : 0;
+    const v = b.velocity();
+    const sp = Math.hypot(v.x, v.z);
+    let kind: 'rainbow' | 'cut' | 'turn';
+    const bp = this.ballPos();
+    if (fwd < -0.5) {
+      kind = 'turn';
+      const nd = f.clone().negate();
+      b.face.copy(nd);
+      b.body.setLinvel({ x: v.x * 0.2, y: v.y, z: v.z * 0.2 });
+      this.ball.setTranslation({ x: bp.x, y: this.ballR + 0.02, z: bp.z });
+      this.ball.setLinvel({ x: nd.x * 4.5, y: 0, z: nd.z * 4.5 });
+    } else if (Math.abs(side) > 0.45) {
+      kind = 'cut';
+      const nd = f.clone().applyAxisAngle(new Vector3(0, 1, 0), -Math.sign(side) * 1.25);
+      b.face.copy(nd);
+      b.body.setLinvel({ x: nd.x * Math.max(5, sp), y: v.y, z: nd.z * Math.max(5, sp) });
+      this.ball.setLinvel({ x: nd.x * (Math.max(5, sp) + 1.5), y: 0, z: nd.z * (Math.max(5, sp) + 1.5) });
+    } else {
+      kind = 'rainbow';
+      this.ball.setTranslation({ x: bp.x, y: this.ballR + 0.05, z: bp.z });
+      this.ball.setLinvel({ x: f.x * (sp + 3.2), y: 6.8, z: f.z * (sp + 3.2) });
+      this.ball.setAngvel({ x: -f.z * 15, y: 0, z: f.x * 15 });
+      this.holder = null;
+    }
+    b.skill = { kind, t: 0, side: Math.sign(side) || 1 };
+    b.skillCd = 0.9;
+    this.lastTouch = b;
+    // wrong-foot the defenders who were about to tackle
+    const p = b.position();
+    for (const o of this.teamBros(1 - b.team)) {
+      const q = o.position();
+      if (o.role !== 'GK' && Math.hypot(q.x - p.x, q.z - p.z) < 3.2 && o.state === 'up') {
+        o.fooled = 0.8;
+        if (this.rng.chance(0.3)) o.knockDown(0.8); // ankles broken
+      }
+    }
+    this.emit({ type: 'skill', text: kind, pos: p, team: b.team });
+    return true;
+  }
+
+  // ---------------- keepers ----------------
+  private keeperCatch(dt: number) {
+    const hold = this.gkHold;
+    if (hold) {
+      const gk = hold.gk;
+      hold.t += dt;
+      const p = gk.position();
+      if (gk.state === 'down' || gk.state === 'getup') {
+        // spilled it!
+        this.gkHold = null;
+        return;
+      }
+      this.ball.setTranslation({ x: p.x + gk.face.x * 0.45, y: 1.05, z: p.z + gk.face.z * 0.45 });
+      this.ball.setLinvel({ x: 0, y: 0, z: 0 });
+      this.ball.setAngvel({ x: 0, y: 0, z: 0 });
+      this.holder = null;
+      if (hold.t > 1.2) {
+        // distribute: throw it to a free mate, or punt it long
+        const mate = this.bestMate(gk, true);
+        if (mate && this.rng.chance(0.6)) this.passTo(gk, mate);
+        else this.lob(gk, this.lobTarget(gk));
+        this.gkHold = null;
+      }
+      return;
+    }
+    if (this.phase !== 'play') return;
+    const bp = this.ballPos();
+    const bv = this.ballVel();
+    const skill = { easy: 0.45, normal: 0.62, hard: 0.78 }[this.opts.difficulty ?? 'normal'];
+    for (const gk of this.bros) {
+      if (gk.role !== 'GK' || gk.catchCd > 0 || (gk.state !== 'up' && gk.state !== 'dive')) continue;
+      const p = gk.position();
+      const ogx = this.ownGoalX(gk.team);
+      if (Math.abs(bp.x - ogx) > 9 || Math.abs(bp.z) > 9) continue;
+      const reach = gk.state === 'dive' ? 1.25 : 0.95;
+      if (Math.hypot(bp.x - p.x, bp.z - p.z) > reach || bp.y > 2.5) continue;
+      if (this.lastTouch?.team === gk.team && this.holder?.team === gk.team) continue;
+      gk.catchCd = 0.7;
+      const sp = bv.length();
+      const chance = sp < 6 ? 0.95 : skill * (sp > 22 ? 0.55 : 1);
+      if (this.rng.chance(chance)) {
+        this.gkHold = { gk, t: 0 };
+        this.holder = null;
+        this.lastTouch = gk;
+        this.emit({ type: sp > 10 ? 'save' : 'catch', pos: bp, team: gk.team, strength: sp });
+      } else if (sp > 8) {
+        // parried
+        const away = new Vector3(-Math.sign(ogx) * 0.5, 0, Math.sign(bp.z || 1)).normalize();
+        this.ball.setLinvel({ x: away.x * sp * 0.45, y: 3 + sp * 0.12, z: away.z * sp * 0.45 });
+        this.lastTouch = gk;
+        this.emit({ type: 'save', pos: bp, team: gk.team, strength: sp });
+      }
+    }
   }
 
   // ---------------- switching beans ----------------
@@ -829,7 +1029,7 @@ export class PartyWorld {
     let best: Bro | null = null;
     let bs = 1e9;
     for (const b of this.teamBros(c.team)) {
-      if (b === c || skip.includes(b)) continue;
+      if (b === c || skip.includes(b) || b.role === 'GK') continue;
       const p = b.position();
       let s = Math.hypot(bp.x - p.x, bp.z - p.z);
       if (b === this.holder) s -= 100;
@@ -858,7 +1058,7 @@ export class PartyWorld {
   private autoSwitch() {
     const c = this.controlled;
     const h = this.holder;
-    if (!c || this.opts.autoSwitch === false || !h || h === c || h.team !== c.team || this.switchCd > 0) return;
+    if (!c || this.opts.autoSwitch === false || !h || h === c || h.team !== c.team || this.switchCd > 0 || h.role === 'GK') return;
     this.switchTo(h);
     this.switchCycle = [];
   }
@@ -880,34 +1080,41 @@ export class PartyWorld {
     }
     b.intent = { moveX: input.mx, moveZ: input.mz, sprint: input.sprint, jump: input.jump, dive: input.tackle && !prev.tackle };
     if (this.phase === 'goal') return;
+    const stick = new Vector3(input.mx, 0, input.mz);
+    const aim = stick.lengthSq() > 0.09 ? stick.clone().normalize() : b.face.clone();
+    if (stick.lengthSq() > 0.09) this.lastAim.copy(aim);
+    else this.lastAim.set(0, 0, 0);
     // grab: hold to hang on
     if (input.grab && !prev.grab) this.tryGrab(b);
     if (!input.grab && b.grabbing) this.release(b);
+    if (input.skill && !prev.skill) this.doSkill(b, stick);
     // kick: hold to charge, release to strike
-    if (input.kick && b.canAct) {
+    if (input.kick && (b.canAct || b.state === 'up')) {
       b.charging = 'kick';
       b.kickCharge = Math.min(0.8, b.kickCharge + dt);
     } else if (!input.kick && prev.kick && b.charging === 'kick') {
-      this.buffer = { kind: 'kick', power: Math.min(1, b.kickCharge / 0.8), t: 0 };
+      this.buffer = { kind: 'kick', power: Math.min(1, b.kickCharge / 0.8), t: 0, aim };
       b.charging = null;
       b.kickCharge = 0;
     } else if (!input.kick) b.charging = null;
-    if (input.pass && !prev.pass) this.buffer = { kind: 'pass', power: 0, t: 0 };
-    if (input.lob && !prev.lob) this.buffer = { kind: 'lob', power: 0, t: 0 };
+    if (input.pass && !prev.pass) this.buffer = { kind: 'pass', power: 0, t: 0, aim };
+    if (input.lob && !prev.lob) this.buffer = { kind: 'lob', power: 0, t: 0, aim };
     // buffered action fires as soon as the ball is in reach (forgiving timing)
     const buf = this.buffer;
     if (buf) {
       buf.t += dt;
+      if (stick.lengthSq() > 0.09) buf.aim.copy(aim);
       if (this.inReach(b)) {
         this.buffer = null;
-        if (buf.kind === 'kick') this.shoot(b, buf.power);
+        if (buf.kind === 'kick') this.smartKick(b, buf.power, buf.aim);
         else if (buf.kind === 'pass') {
-          const m = this.bestMate(b);
+          const m = this.bestMate(b, false, buf.aim);
           if (m) this.passTo(b, m);
-          else this.shoot(b, 0.3);
-        } else this.lob(b, this.lobTarget(b));
+          else this.shootAt(b, 0.2, buf.aim, 'pass');
+        } else this.lob(b, this.lobTarget(b, buf.aim));
       } else if (buf.t > 0.6) {
         this.buffer = null;
+        b.kickKind = buf.kind === 'kick' ? 'shot' : buf.kind;
         b.kickT = 0; // swing at thin air
       }
     }

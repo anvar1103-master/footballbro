@@ -19,15 +19,15 @@ const sound = new Sound();
 
 // ---------------- input ----------------
 type Layout = 'arrows' | 'wasd';
-type Act = 'up' | 'down' | 'left' | 'right' | 'sprint' | 'jump' | 'kick' | 'pass' | 'lob' | 'tackle' | 'grab' | 'switch';
+type Act = 'up' | 'down' | 'left' | 'right' | 'sprint' | 'jump' | 'kick' | 'pass' | 'lob' | 'tackle' | 'grab' | 'switch' | 'skill';
 const LAYOUTS: Record<Layout, { name: string; keys: Record<Act, string[]> }> = {
   arrows: {
     name: 'Стрелки + ASDWEQR',
-    keys: { up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space', 'KeyW'], kick: ['KeyD'], pass: ['KeyS'], lob: ['KeyA'], tackle: ['KeyE'], grab: ['KeyR'], switch: ['KeyQ'] },
+    keys: { up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space', 'KeyW'], kick: ['KeyD'], pass: ['KeyS'], lob: ['KeyA'], tackle: ['KeyE'], grab: ['KeyR'], switch: ['KeyQ'], skill: ['KeyF'] },
   },
   wasd: {
     name: 'WASD + JKLIU',
-    keys: { up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space'], kick: ['KeyJ'], pass: ['KeyK'], lob: ['KeyL'], tackle: ['KeyI'], grab: ['KeyU'], switch: ['KeyQ', 'KeyO'] },
+    keys: { up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space'], kick: ['KeyJ'], pass: ['KeyK'], lob: ['KeyL'], tackle: ['KeyI'], grab: ['KeyU'], switch: ['KeyQ', 'KeyO'], skill: ['KeyH'] },
   },
 };
 let layout: Layout = 'arrows';
@@ -61,7 +61,7 @@ function readInput(cam: { forward(): THREE.Vector3 }): PartyInput {
     mx /= l;
     mz /= l;
   }
-  return { mx, mz, sprint: h('sprint'), jump: h('jump'), kick: h('kick'), pass: h('pass'), lob: h('lob'), tackle: h('tackle'), grab: h('grab'), switch: h('switch') };
+  return { mx, mz, sprint: h('sprint'), jump: h('jump'), kick: h('kick'), pass: h('pass'), lob: h('lob'), tackle: h('tackle'), grab: h('grab'), switch: h('switch'), skill: h('skill') };
 }
 const label = (c: string) =>
   c.startsWith('Key') ? c.slice(3) : c.startsWith('Arrow') ? ({ ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' } as Record<string, string>)[c] : c === 'Space' ? 'Пробел' : c.replace('Left', '').replace('Right', '');
