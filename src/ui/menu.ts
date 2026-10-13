@@ -1,5 +1,6 @@
 import { Difficulty, TeamSize } from '../sim/config';
 import { TEAM_PRESETS, TeamInfo } from '../sim/team';
+import { ActionId, bindingLabel } from '../settings';
 
 export interface MenuResult {
   home: TeamInfo;
@@ -21,7 +22,7 @@ function kitHtml(t: TeamInfo) {
   </div>`;
 }
 
-export function showMenu(root: HTMLElement, onStart: (r: MenuResult) => void) {
+export function showMenu(root: HTMLElement, onStart: (r: MenuResult) => void, onSettings?: (done: () => void) => void) {
   let saved: Partial<{ home: number; away: number; size: TeamSize; half: number; diff: Difficulty }> = {};
   try {
     saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
@@ -40,13 +41,14 @@ export function showMenu(root: HTMLElement, onStart: (r: MenuResult) => void) {
   root.appendChild(el);
 
   const render = () => {
+    const b = (id: ActionId) => bindingLabel(id);
     const h = TEAM_PRESETS[state.home];
     const a = TEAM_PRESETS[state.away];
     const seg = (key: string, items: [string | number, string][], cur: string | number) =>
       `<div class="seg">${items.map(([v, l]) => `<button data-k="${key}" data-v="${v}" class="${v === cur ? 'on' : ''}">${l}</button>`).join('')}</div>`;
     el.innerHTML = `
       <div class="menu-card">
-        <div class="logo">FOOTBALL<span>BRO</span></div>
+        <div class="logo">SOCCER<span>BRO</span></div>
         <div class="tagline">Мультяшный футбол · крученые удары · живая сетка ворот</div>
         <div class="teams">
           <div class="team-pick"><div class="label">Ваша команда</div><div class="name">${h.name}</div>${kitHtml(h)}
@@ -62,16 +64,16 @@ export function showMenu(root: HTMLElement, onStart: (r: MenuResult) => void) {
         </div>
         <div class="start-row">
           <button class="btn big" id="play">НАЧАТЬ МАТЧ</button>
-          <div style="margin-top:10px"><button class="btn" id="watch">Смотреть ИИ vs ИИ</button></div>
+          <div class="row" style="margin-top:10px"><button class="btn" id="watch">Смотреть ИИ vs ИИ</button><button class="btn" id="settings">Настройки</button></div>
         </div>
         <div class="controls">
-          <div><b>WASD / стрелки</b> бег, <b>Shift</b> спринт</div>
-          <div><b>K</b> пас, <b>L</b> пас на ход, <b>O</b> навес</div>
-          <div><b>J</b> удар (держи — сильнее)</div>
-          <div><b>I</b> крученый удар (finesse)</div>
-          <div><b>K</b> без мяча — прессинг и отбор</div>
-          <div><b>J</b> без мяча — подкат, <b>Space</b> смена</div>
-          <div><b>C</b> камера, <b>M</b> звук, <b>Esc</b> пауза</div>
+          <div><b>${b('up')} ${b('left')} ${b('down')} ${b('right')}</b> бег, <b>${b('sprint')}</b> спринт</div>
+          <div><b>${b('pass')}</b> пас, <b>${b('through')}</b> на ход, <b>${b('lob')}</b> навес</div>
+          <div><b>${b('shoot')}</b> удар (держи — сильнее)</div>
+          <div><b>${b('finesse')}</b> крученый, <b>${b('chip')}</b> парашют, <b>${b('skill')}</b> финт</div>
+          <div>В защите: <b>${b('pass')}</b> сдерживание, <b>${b('shoot')}</b> отбор</div>
+          <div><b>${b('lob')}</b> подкат, <b>${b('through')}</b> прессинг партнёром</div>
+          <div><b>${b('switch')}</b> смена игрока, <b>V</b> камера, <b>Esc</b> пауза</div>
           <div><b>Геймпад</b>: A пас, B удар, RB+B крученый</div>
         </div>
         <div class="credits">Персонажи: Kenney Mini Characters (CC0) · Звуки и стадион — процедурные</div>
@@ -102,6 +104,14 @@ export function showMenu(root: HTMLElement, onStart: (r: MenuResult) => void) {
       if (k === 'half') state.half = Number(v);
       if (k === 'diff') state.diff = v as Difficulty;
       render();
+      return;
+    }
+    if (t.id === 'settings' && onSettings) {
+      el.style.display = 'none';
+      onSettings(() => {
+        el.style.display = '';
+        render();
+      });
       return;
     }
     if (t.id === 'play' || t.id === 'watch') {

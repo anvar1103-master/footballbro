@@ -76,15 +76,16 @@ describe('ball physics', () => {
   });
 
   it('goal net stops a shot inside the goal', () => {
-    const { b } = fly(new Vector3(40, 1, 0), new Vector3(30, 0, 0), new Vector3(), 3);
+    const gl = field.length / 2;
+    const { b } = fly(new Vector3(gl - 10, 1, 0), new Vector3(30, 0, 0), new Vector3(), 3);
     expect(b.inGoal).toBe(1);
-    expect(b.pos.x).toBeGreaterThan(50);
-    expect(b.pos.x).toBeLessThan(50 + field.goalDepthBottom + 0.8);
+    expect(b.pos.x).toBeGreaterThan(gl);
+    expect(b.pos.x).toBeLessThan(gl + field.goalDepthBottom + 0.8);
     expect(b.vel.length()).toBeLessThan(3);
   });
 
   it('post deflects the ball', () => {
-    const { b } = fly(new Vector3(40, 1, field.goalHalfW), new Vector3(25, 0, 0), new Vector3(), 1.0);
+    const { b } = fly(new Vector3(field.length / 2 - 10, 1, field.goalHalfW), new Vector3(25, 0, 0), new Vector3(), 1.0);
     expect(b.vel.x).toBeLessThan(0);
   });
 });

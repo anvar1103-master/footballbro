@@ -1,4 +1,5 @@
 import type { Match } from '../sim/match';
+import { ActionId, bindingLabel } from '../settings';
 
 /** DOM overlay: scoreboard, banners, power bar, radar, replay tag, pause & full-time panels. */
 export class Hud {
@@ -8,6 +9,9 @@ export class Hud {
   private banner: HTMLDivElement;
   private toast: HTMLDivElement;
   private power: HTMLDivElement;
+  private ptag: HTMLDivElement;
+  private pname: HTMLDivElement;
+  private stam: HTMLDivElement;
   private powerFill: HTMLDivElement;
   private radar: HTMLCanvasElement;
   private tag: HTMLDivElement;
@@ -32,10 +36,10 @@ export class Hud {
       </div>
       <div class="banner"></div>
       <div class="toast"></div>
-      <div class="power"><div class="fill"></div></div>
+      <div class="ptag"><div class="pname"></div><div class="stam"><div></div></div><div class="power"><div class="fill"></div></div></div>
       <canvas class="radar" width="200" height="128"></canvas>
       <div class="player-tag"></div>
-      <div class="hint">K пас · L на ход · O навес · J удар · I крученый · Shift спринт · Space смена · C камера</div>
+      <div class="hint"></div>
       <div class="replay-tag">ПОВТОР</div>
       <div class="replay-skip">любая кнопка — пропустить</div>`;
     this.score = el.querySelector('.score')!;
@@ -43,6 +47,9 @@ export class Hud {
     this.banner = el.querySelector('.banner')!;
     this.toast = el.querySelector('.toast')!;
     this.power = el.querySelector('.power')!;
+    this.ptag = el.querySelector('.ptag')!;
+    this.pname = el.querySelector('.pname')!;
+    this.stam = el.querySelector('.stam div')!;
     this.powerFill = el.querySelector('.power .fill')!;
     this.radar = el.querySelector('.radar')!;
     this.tag = el.querySelector('.player-tag')!;
@@ -50,7 +57,11 @@ export class Hud {
     this.replaySkip = el.querySelector('.replay-skip')!;
     if (m.humanTeam < 0) {
       this.tag.style.display = 'none';
-      (el.querySelector('.hint') as HTMLElement).textContent = 'Режим наблюдения · C камера · Esc пауза';
+      (el.querySelector('.hint') as HTMLElement).textContent = 'Режим наблюдения · V камера · Esc пауза';
+    } else {
+      const b = (id: ActionId) => bindingLabel(id);
+      (el.querySelector('.hint') as HTMLElement).textContent =
+        `${b('pass')} пас · ${b('through')} на ход · ${b('lob')} навес · ${b('shoot')} удар · ${b('finesse')} крученый · ${b('sprint')} спринт · ${b('switch')} смена · Esc меню`;
     }
     const ratio = m.field.width / m.field.length;
     this.radar.height = Math.round(200 * ratio);
@@ -77,18 +88,19 @@ export class Hud {
     if (on) this.hideBanner();
     this.replayTag.classList.toggle('show', on);
     this.replaySkip.classList.toggle('show', on);
-    this.power.style.display = 'none';
+    this.ptag.style.display = 'none';
   }
 
-  setPower(x: number, y: number, level: number, finesse: boolean) {
-    if (level <= 0) {
-      this.power.style.display = 'none';
-      return;
-    }
-    this.power.style.display = 'block';
-    this.power.style.left = `${x - 35}px`;
-    this.power.style.top = `${y - 8}px`;
-    this.power.classList.toggle('finesse', finesse);
+  /** name, stamina and power bar floating above the controlled player */
+  setPlayerTag(x: number, y: number, visible: boolean, name: string, stamina: number, level: number, kind: string | null) {
+    this.ptag.style.display = visible ? 'flex' : 'none';
+    if (!visible) return;
+    this.ptag.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -100%)`;
+    if (this.pname.textContent !== name) this.pname.textContent = name;
+    this.stam.style.width = `${Math.round(stamina * 100)}%`;
+    this.stam.classList.toggle('low', stamina < 0.3);
+    this.power.style.display = level > 0 ? 'block' : 'none';
+    this.power.dataset.kind = kind ?? '';
     this.powerFill.style.width = `${Math.round(level * 100)}%`;
   }
 
@@ -147,15 +159,16 @@ export class Hud {
     g.fill();
   }
 
-  showPause(onResume: () => void, onRestart: () => void, onMenu: () => void) {
+  showPause(onResume: () => void, onRestart: () => void, onMenu: () => void, onSettings: () => void) {
     this.closeOverlay();
     const o = document.createElement('div');
     o.className = 'overlay';
     o.innerHTML = `<div class="panel"><h2>Пауза</h2>
       <div class="row"><button class="btn big" data-a="resume">Продолжить</button></div>
-      <div class="row" style="margin-top:12px"><button class="btn" data-a="restart">Заново</button><button class="btn" data-a="menu">В меню</button></div></div>`;
+      <div class="row" style="margin-top:12px"><button class="btn" data-a="settings">Настройки</button><button class="btn" data-a="restart">Заново</button><button class="btn" data-a="menu">В меню</button></div></div>`;
     o.addEventListener('click', (e) => {
       const a = (e.target as HTMLElement).dataset.a;
+      if (a === 'settings') onSettings();
       if (a === 'resume') onResume();
       if (a === 'restart') onRestart();
       if (a === 'menu') onMenu();

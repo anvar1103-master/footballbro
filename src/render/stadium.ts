@@ -19,10 +19,10 @@ function pitchTexture(f: FieldDims, margin: number) {
   // mowing stripes
   const stripes = 14;
   const sw = (f.length / stripes) * scale;
-  g.fillStyle = '#3f9a3a';
+  g.fillStyle = '#2f7f2b';
   g.fillRect(0, 0, cw, ch);
   for (let i = -2; i < stripes + 2; i++) {
-    g.fillStyle = i % 2 === 0 ? '#4caf45' : '#41a03c';
+    g.fillStyle = i % 2 === 0 ? '#3f9c37' : '#2f832b';
     g.fillRect(margin * scale + i * sw, 0, sw, ch);
   }
   // subtle checker for the cartoon "mown" look
@@ -98,6 +98,62 @@ function pitchTexture(f: FieldDims, margin: number) {
   return { tex, W, H };
 }
 
+/** Tiling grass detail: R = fine blades, G = soft patches. */
+function grassDetailTexture() {
+  const N = 256;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = N;
+  const g = cv.getContext('2d')!;
+  const img = g.createImageData(N, N);
+  let seed = 11;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  // soft value noise for patches (tileable by wrapping the lattice)
+  const L = 8;
+  const lat = Array.from({ length: L * L }, () => rnd());
+  const val = (x: number, y: number) => {
+    const fx = (x / N) * L, fy = (y / N) * L;
+    const x0 = Math.floor(fx), y0 = Math.floor(fy);
+    const tx = fx - x0, ty = fy - y0;
+    const at = (i: number, j: number) => lat[((j % L) + L) % L * L + (((i % L) + L) % L)];
+    const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+    return (at(x0, y0) * (1 - sx) + at(x0 + 1, y0) * sx) * (1 - sy) + (at(x0, y0 + 1) * (1 - sx) + at(x0 + 1, y0 + 1) * sx) * sy;
+  };
+  for (let y = 0; y < N; y++)
+    for (let x = 0; x < N; x++) {
+      const i = (y * N + x) * 4;
+      img.data[i] = 150 + rnd() * 60;
+      img.data[i + 1] = val(x, y) * 255;
+      img.data[i + 2] = 0;
+      img.data[i + 3] = 255;
+    }
+  g.putImageData(img, 0, 0);
+  // blades: short dark/light strokes
+  for (let k = 0; k < 2600; k++) {
+    const x = rnd() * N, y = rnd() * N;
+    const a = -Math.PI / 2 + (rnd() - 0.5) * 0.9;
+    const len = 3 + rnd() * 6;
+    const v = rnd() < 0.5 ? 70 + rnd() * 60 : 200 + rnd() * 55;
+    g.strokeStyle = `rgb(${v},${0},0)`;
+    g.globalCompositeOperation = 'lighter';
+    g.globalCompositeOperation = 'source-over';
+    g.lineWidth = 1;
+    for (const ox of [-N, 0, N]) for (const oy of [-N, 0, N]) {
+      g.beginPath();
+      g.moveTo(x + ox, y + oy);
+      g.lineTo(x + ox + Math.cos(a) * len, y + oy + Math.sin(a) * len);
+      g.stroke();
+    }
+  }
+  // restore patch noise in G (strokes wrote G=0)
+  const img2 = g.getImageData(0, 0, N, N);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) img2.data[(y * N + x) * 4 + 1] = val(x, y) * 255;
+  g.putImageData(img2, 0, 0);
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  return t;
+}
+
 function boardTexture(teams: TeamInfo[]) {
   const cv = document.createElement('canvas');
   cv.width = 2048;
@@ -159,7 +215,26 @@ export class Stadium {
   constructor(public f: FieldDims, teams: TeamInfo[], public homeTeamForCrowd: number) {
     const margin = f.boardMargin + 3;
     const { tex, W, H } = pitchTexture(f, margin);
-    const pitch = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }));
+    const grassMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92 });
+    const detail = grassDetailTexture();
+    const blades = { value: detail };
+    // close-up grass: a tiling blade texture multiplied over the stripes/lines texture
+    grassMat.onBeforeCompile = (sh) => {
+      sh.uniforms.uDetail = blades;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vWorldXZ;')
+        .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWorldXZ = (modelMatrix * vec4(transformed, 1.0)).xz;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uDetail;\nvarying vec2 vWorldXZ;')
+        .replace(
+          '#include <map_fragment>',
+          `#include <map_fragment>
+          float d1 = texture2D(uDetail, vWorldXZ * 0.55).r;
+          float d2 = texture2D(uDetail, vWorldXZ * 0.071 + 0.3).g;
+          diffuseColor.rgb *= mix(0.82, 1.14, d1) * mix(0.9, 1.08, d2);`,
+        );
+    };
+    const pitch = new THREE.Mesh(new THREE.PlaneGeometry(W, H), grassMat);
     pitch.rotation.x = -Math.PI / 2;
     pitch.receiveShadow = true;
     this.group.add(pitch);
@@ -274,7 +349,7 @@ export class Stadium {
     const stepD = 0.95;
     const gapX = f.length / 2 + f.boardMargin + 5;
     const gapZ = f.width / 2 + f.boardMargin + 4;
-    const concrete = new THREE.MeshStandardMaterial({ color: 0x9aa3b5, roughness: 0.9 });
+    const concrete = new THREE.MeshStandardMaterial({ color: 0x4a5266, roughness: 0.9 });
     const seatColors = [new THREE.Color(teams[0].primary), new THREE.Color(teams[1].primary), new THREE.Color('#e9ecef')];
     const fans: { x: number; y: number; z: number; rot: number; c: THREE.Color }[] = [];
     const sides = [
@@ -325,8 +400,9 @@ export class Stadium {
           // home end is busier with home colours
           const r = rng();
           const team = si === 3 ? 1 : si === 2 ? 0 : r < 0.5 ? 0 : 1;
-          const c = rng() < 0.6 ? seatColors[team].clone() : new THREE.Color().setHSL(rng(), 0.55, 0.55);
-          c.offsetHSL(0, 0, (rng() - 0.5) * 0.15);
+          const c = rng() < 0.55 ? seatColors[team].clone() : new THREE.Color().setHSL(rng(), 0.3, 0.42 + rng() * 0.2);
+          c.lerp(new THREE.Color(0x30384a), 0.25 + t * 0.012);
+          c.offsetHSL(0, -0.05, (rng() - 0.5) * 0.08);
           const local = new THREE.Vector3(x + (rng() - 0.5) * 0.15, stepH * (t + 1), -(t * stepD + stepD / 2));
           local.applyAxisAngle(new THREE.Vector3(0, 1, 0), sd.rot);
           fans.push({ x: local.x + sd.cx, y: local.y, z: local.z + sd.cz, rot: sd.rot, c });

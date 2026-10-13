@@ -29,10 +29,12 @@ export interface InputState {
   pass: boolean;
   through: boolean;
   lob: boolean;
+  chip: boolean;
+  skill: boolean;
   switch: boolean;
 }
 
-export const EMPTY_INPUT: InputState = { mx: 0, my: 0, sprint: false, shoot: false, finesse: false, pass: false, through: false, lob: false, switch: false };
+export const EMPTY_INPUT: InputState = { mx: 0, my: 0, sprint: false, shoot: false, finesse: false, pass: false, through: false, lob: false, chip: false, skill: false, switch: false };
 
 export type GameEventType =
   | 'kick' | 'bounce' | 'post' | 'net' | 'whistle' | 'goal' | 'save' | 'catch' | 'tackle' | 'foul'
@@ -100,6 +102,10 @@ export class Match {
   private headerTried = new Set<string>();
   prevInput: InputState = { ...EMPTY_INPUT };
   diff: (typeof DIFFICULTY)[Difficulty];
+  /** human holds 'teammate press' (through key in defence) */
+  teammatePress = false;
+  /** who Space would switch to (shown by the renderer) */
+  switchTarget: Player | null = null;
   /** last pass: who it is meant for and where */
   pass: { from: Player; to: Player; target: Vector3; t: number } | null = null;
 
@@ -222,7 +228,8 @@ export class Match {
       switch (p.action) {
         case 'kick':
         case 'throw': {
-          const windup = p.kick?.kind === 'shot' || p.kick?.kind === 'finesse' ? 0.16 : p.action === 'throw' ? 0.3 : 0.11;
+          const k = p.kick?.kind;
+          const windup = k === 'shot' || k === 'finesse' || k === 'chip' ? 0.16 : p.action === 'throw' ? 0.3 : 0.11;
           if (!p.kickFired && p.actionT >= windup) {
             p.kickFired = true;
             this.fireKick(p);
@@ -241,6 +248,14 @@ export class Match {
         case 'dive':
           this.diveTick(p, dt);
           break;
+        case 'skill': {
+          // feint: burst sideways with the ball, then carry on
+          const k = 1 - p.actionT / p.actionDur;
+          const fwd = Math.max(3, p.speed * 0.6);
+          p.vel.set(p.face.x * fwd + p.actionDir.x * 7 * k, 0, p.face.z * fwd + p.actionDir.z * 7 * k);
+          p.pos.addScaledVector(p.vel, dt);
+          break;
+        }
       }
       if (p.actionT >= p.actionDur && p.action !== 'celebrate') {
         if (p.action === 'slide') {
@@ -251,7 +266,9 @@ export class Match {
     }
     p.move(dt, withBall);
     // facing
-    if (p.action === 'none' || p.action === 'celebrate') {
+    if (p.jockey && this.owner && p.action === 'none') {
+      p.turnTowards(this.owner.pos.x - p.pos.x, this.owner.pos.z - p.pos.z, dt, 10);
+    } else if (p.action === 'none' || p.action === 'celebrate') {
       if (p.speed > 0.6) p.turnTowards(p.vel.x, p.vel.z, dt, withBall ? 9 : 14);
       else if (!p.holding) p.turnTowards(this.ball.pos.x - p.pos.x, this.ball.pos.z - p.pos.z, dt, 6);
     }
@@ -330,7 +347,7 @@ export class Match {
     // dribble: keep the ball just ahead of the feet, with a little touch rhythm
     const sp = o.speed;
     const rhythm = sp > 2 ? Math.sin(this.time * (5 + sp)) * 0.12 * Math.min(1, sp / 6) : 0;
-    const off = 0.5 + sp * 0.05 + rhythm;
+    const off = 0.45 + sp * (o.sprint ? 0.08 : 0.04) + rhythm;
     const tx = o.pos.x + o.face.x * off;
     const tz = o.pos.z + o.face.z * off;
     const k = 12;
@@ -537,12 +554,21 @@ export class Match {
       }
       case 'pass': {
         const dist = Math.hypot(o.target.x - from.x, o.target.z - from.z);
-        sol = solveGroundPass(from, o.target, Math.min(9, 4 + dist * 0.12));
+        // power (human: how long the button was held) makes the pass firmer or softer
+        sol = solveGroundPass(from, o.target, Math.min(11, (4 + dist * 0.12) * (0.75 + 0.5 * o.power)));
         break;
       }
       case 'through':
-        sol = solveGroundPass(from, o.target, 3.2);
+        sol = solveGroundPass(from, o.target, 2.6 + 2 * o.power);
         break;
+      case 'chip': {
+        // lofted over the keeper, dropping just behind the line
+        const gx = this.attackGoalX(p.team);
+        const land = o.target.clone().setY(BALL.radius);
+        land.x = gx + Math.sign(gx) * 1.2;
+        sol = solveLob(f, from, land, 0.78, 30);
+        break;
+      }
       case 'lob':
         sol = solveLob(f, from, o.target, 0.62, 22);
         break;
@@ -559,6 +585,10 @@ export class Match {
       default:
         sol = solveLob(f, from, o.target, 0.35, 0);
         break;
+    }
+    if (o.kind === 'pass' || o.kind === 'through' || o.kind === 'lob' || o.kind === 'cross') {
+      const err = this.rng.gauss() * (1.05 - p.stats.pass) * 0.07 * (0.6 + o.power) * (p.speed > 6 ? 1.6 : 1);
+      sol.vel.applyAxisAngle(new Vector3(0, 1, 0), err);
     }
     b.vel.copy(sol.vel);
     b.spin.copy(sol.spin);
@@ -582,7 +612,7 @@ export class Match {
       if (this.controlled && receiver.team === this.humanTeam && this.controlled.team === receiver.team) this.controlled = receiver;
     } else this.pass = null;
 
-    if (o.kind === 'shot' || o.kind === 'finesse' || (o.kind === 'clear' && false)) {
+    if (o.kind === 'shot' || o.kind === 'finesse' || o.kind === 'chip') {
       this.teams[p.team].shots++;
       this.registerShot(p.team);
     }
@@ -638,6 +668,7 @@ export class Match {
     let chance = 0.3 + 0.4 * p.stats.tackle - 0.35 * o.stats.dribble + front * 0.12;
     if (p.team !== this.humanTeam && this.humanTeam >= 0) chance *= 0.75 + 0.35 * this.diff.aiSkill;
     if (o.holding) chance = 0;
+    if (o.action === 'skill') chance *= 0.3;
     if (this.rng.chance(Math.max(0.12, Math.min(0.85, chance)))) {
       this.setOwner(null);
       const b = this.ball;

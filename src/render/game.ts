@@ -7,6 +7,12 @@ import { GoalNet } from './net';
 import { PlayerActor } from './players';
 import { Stadium, makeSky } from './stadium';
 import type { FrameView } from './view';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import type { Quality } from '../settings';
 
 /** Owns the three.js scene and draws FrameViews (live or replay). */
 export class GameRenderer {
@@ -20,49 +26,71 @@ export class GameRenderer {
   particles = new Particles();
   marker: THREE.Group;
   private markerRing: THREE.Mesh;
+  private switchMarker: THREE.Mesh;
   time = 0;
 
   private firstFrame = true;
 
-  constructor(public container: HTMLElement, public match: Match, lowQuality = false) {
-    const r = new THREE.WebGLRenderer({ antialias: !lowQuality, powerPreference: 'high-performance' });
-    r.setPixelRatio(lowQuality ? 1 : Math.min(window.devicePixelRatio, 2));
+  composer: EffectComposer | null = null;
+
+  constructor(public container: HTMLElement, public match: Match, public quality: Quality = 'high') {
+    const low = quality === 'low';
+    const r = new THREE.WebGLRenderer({ antialias: low, powerPreference: 'high-performance' });
+    r.setPixelRatio(quality === 'high' ? Math.min(window.devicePixelRatio, 2) : 1);
     r.setSize(container.clientWidth, container.clientHeight);
-    r.shadowMap.enabled = !lowQuality;
+    r.shadowMap.enabled = !low;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 1.05;
+    r.toneMappingExposure = 0.88;
     r.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(r.domElement);
     this.renderer = r;
 
     const f = match.field;
     this.rig = new CameraRig(f, container.clientWidth / container.clientHeight);
-    this.scene.fog = new THREE.Fog(0xcfe8ff, 220, 650);
+    this.scene.fog = new THREE.Fog(0xc9def0, 260, 700);
     this.scene.add(makeSky());
 
-    const hemi = new THREE.HemisphereLight(0xdff0ff, 0x3f7a3a, 1.1);
+    // image based ambient light: soft, colourful reflections on kits, posts and the ball
+    const pmrem = new THREE.PMREMGenerator(r);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.35;
+    pmrem.dispose();
+
+    const hemi = new THREE.HemisphereLight(0xe4f1ff, 0x3d6a32, 0.55);
     this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff0d6, 2.4);
-    sun.position.set(-35, 80, 45);
+    // late-afternoon sun: warm, low enough for long readable shadows
+    const sun = new THREE.DirectionalLight(0xffe2bd, 2.6);
+    sun.position.set(-55, 70, 60);
     sun.castShadow = true;
-    const ext = Math.max(f.length, f.width) / 2 + 12;
+    const ext = Math.max(f.length, f.width) / 2 + 14;
     sun.shadow.camera.left = -ext;
     sun.shadow.camera.right = ext;
     sun.shadow.camera.top = ext;
     sun.shadow.camera.bottom = -ext;
     sun.shadow.camera.near = 10;
-    sun.shadow.camera.far = 220;
-    sun.shadow.mapSize.set(4096, 4096);
-    sun.shadow.bias = -0.0004;
-    sun.shadow.normalBias = 0.02;
+    sun.shadow.camera.far = 260;
+    sun.shadow.mapSize.set(quality === 'high' ? 4096 : 2048, quality === 'high' ? 4096 : 2048);
+    sun.shadow.bias = -0.0003;
+    sun.shadow.normalBias = 0.03;
+    sun.shadow.radius = 3;
     this.scene.add(sun);
     this.scene.add(sun.target);
+
+    if (!low) {
+      const size = r.getDrawingBufferSize(new THREE.Vector2());
+      const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+      const composer = new EffectComposer(r, rt);
+      composer.addPass(new RenderPass(this.scene, this.rig.camera));
+      if (quality === 'high') composer.addPass(new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.22, 0.5, 0.92));
+      composer.addPass(new OutputPass());
+      this.composer = composer;
+    }
 
     this.stadium = new Stadium(f, match.teams.map((t) => t.info), 0);
     this.scene.add(this.stadium.group);
     this.nets = [new GoalNet(f, -1), new GoalNet(f, 1)];
-    for (const n of this.nets) this.scene.add(n.lines);
+    for (const n of this.nets) this.scene.add(n.mesh);
     this.scene.add(this.ball.mesh, this.ball.shadow, this.ball.trail);
     this.scene.add(this.particles.mesh);
 
@@ -81,15 +109,19 @@ export class GameRenderer {
     // controlled-player marker: ring + floating arrow
     this.marker = new THREE.Group();
     const ringMat = new THREE.MeshBasicMaterial({ color: 0xffe14d, transparent: true, opacity: 0.9, depthWrite: false });
-    this.markerRing = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 32), ringMat);
+    this.markerRing = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.64, 32), ringMat);
     this.markerRing.rotation.x = -Math.PI / 2;
     this.markerRing.position.y = 0.03;
-    const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 4), new THREE.MeshBasicMaterial({ color: 0xffe14d }));
+    const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.42, 3), new THREE.MeshBasicMaterial({ color: 0xffe14d }));
     arrow.rotation.x = Math.PI;
     arrow.position.y = 2.6;
     arrow.name = 'arrow';
     this.marker.add(this.markerRing, arrow);
     this.scene.add(this.marker);
+    // next switch candidate: small pale triangle
+    this.switchMarker = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.32, 3), new THREE.MeshBasicMaterial({ color: 0x9fd8ff }));
+    this.switchMarker.rotation.x = Math.PI;
+    this.scene.add(this.switchMarker);
 
     window.addEventListener('resize', () => this.resize());
   }
@@ -97,6 +129,7 @@ export class GameRenderer {
   resize() {
     const w = this.container.clientWidth, h = this.container.clientHeight;
     this.renderer.setSize(w, h);
+    this.composer?.setSize(w, h);
     this.rig.camera.aspect = w / h;
     this.rig.camera.updateProjectionMatrix();
   }
@@ -132,7 +165,7 @@ export class GameRenderer {
   }
 
   /** Draw a frame. In replay mode the camera is cinematic and the marker hidden. */
-  draw(frame: FrameView, dt: number, opts: { replay: boolean; controlledId: number; snap?: boolean; goalX?: number; focus?: THREE.Vector3 }) {
+  draw(frame: FrameView, dt: number, opts: { replay: boolean; controlledId: number; switchId?: number; snap?: boolean; goalX?: number; focus?: THREE.Vector3 }) {
     this.time += dt;
     for (const pv of frame.players) this.actors.get(pv.id)?.update(pv, dt);
     this.ball.update(frame.ball, frame.ballVel, frame.ballSpin, dt, this.rig.camera);
@@ -140,19 +173,27 @@ export class GameRenderer {
     this.particles.update(dt);
     this.stadium.update(dt, this.time);
 
+    const sw = frame.players.find((p) => p.id === opts.switchId);
+    this.switchMarker.visible = !!sw && !opts.replay;
+    if (sw) this.switchMarker.position.set(sw.x, 2.25 + Math.sin(this.time * 4) * 0.06, sw.z);
     const ctrl = frame.players.find((p) => p.id === opts.controlledId);
     this.marker.visible = !!ctrl && !opts.replay;
     if (ctrl) {
       this.marker.position.set(ctrl.x, 0, ctrl.z);
       const arrow = this.marker.getObjectByName('arrow')!;
-      arrow.position.y = 2.55 + Math.sin(this.time * 5) * 0.12;
+      arrow.position.y = 2.15 + Math.sin(this.time * 5) * 0.1;
       arrow.rotation.y += dt * 2;
     }
     const snap = !!opts.snap || this.firstFrame;
     this.firstFrame = false;
     if (opts.replay) this.rig.replay(frame.ball, opts.goalX ?? 0, dt, snap);
     else this.rig.follow(opts.focus ?? frame.ball, frame.ballVel, dt, snap);
-    this.renderer.render(this.scene, this.rig.camera);
+    this.render();
+  }
+
+  render() {
+    if (this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.rig.camera);
   }
 
   /** world -> screen pixels (for HUD widgets) */

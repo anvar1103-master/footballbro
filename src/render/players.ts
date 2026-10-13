@@ -216,6 +216,26 @@ function kitTexture(model: string, shirt: string, shorts: string, socks: string)
 
 const GK_KITS = ['#2ec4b6', '#ffd60a', '#222222', '#c77dff'];
 
+/** Clone a Kenney character in team kit (shared by the classic game and party football). Unscaled. */
+export function buildCharacterModel(modelIndex: number, gk: boolean, info: TeamInfo, teamIndex: number, oppInfo: TeamInfo) {
+  const name = CHARACTER_MODELS[modelIndex];
+  const a = assets.get(name)!;
+  const model = skeletonClone(a.gltf.scene);
+  const gkColor = GK_KITS.find((c) => c !== info.primary && c !== oppInfo.primary) ?? GK_KITS[teamIndex];
+  const tex = kitTexture(name, gk ? gkColor : info.primary, gk ? '#222222' : info.secondary, gk ? gkColor : info.accent);
+  model.traverse((o) => {
+    const mesh = o as THREE.SkinnedMesh;
+    if (mesh.isMesh) {
+      const src = mesh.material as THREE.MeshStandardMaterial;
+      const mat = new THREE.MeshStandardMaterial({ map: src.map, roughness: 0.75, metalness: 0 });
+      if (!mesh.name.includes('head')) mat.map = tex;
+      mesh.material = mat;
+      mesh.castShadow = true;
+    }
+  });
+  return model;
+}
+
 /** One on-pitch character: model clone + mixer + animation state. */
 export class PlayerActor {
   root = new THREE.Group();
@@ -227,22 +247,8 @@ export class PlayerActor {
   lastActionT = 0;
 
   constructor(public view: PlayerView, info: TeamInfo, teamIndex: number, oppInfo: TeamInfo) {
-    const name = CHARACTER_MODELS[view.model];
-    const a = assets.get(name)!;
-    const model = skeletonClone(a.gltf.scene);
-    const gk = view.role === 'GK';
-    const gkColor = GK_KITS.find((c) => c !== info.primary && c !== oppInfo.primary) ?? GK_KITS[teamIndex];
-    const tex = kitTexture(name, gk ? gkColor : info.primary, gk ? '#222222' : info.secondary, gk ? gkColor : info.accent);
-    model.traverse((o) => {
-      const mesh = o as THREE.SkinnedMesh;
-      if (mesh.isMesh) {
-        const src = mesh.material as THREE.MeshStandardMaterial;
-        const mat = new THREE.MeshStandardMaterial({ map: src.map, roughness: 0.75, metalness: 0 });
-        if (!mesh.name.includes('head')) mat.map = tex;
-        mesh.material = mat;
-        mesh.castShadow = true;
-      }
-    });
+    const a = assets.get(CHARACTER_MODELS[view.model])!;
+    const model = buildCharacterModel(view.model, view.role === 'GK', info, teamIndex, oppInfo);
     model.scale.setScalar(PLAYER.modelScale);
     this.inner.add(model);
     this.root.add(this.inner);

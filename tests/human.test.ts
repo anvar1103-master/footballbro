@@ -58,15 +58,50 @@ describe('human controls', () => {
     expect(m.controlled).not.toBe(p);
   });
 
-  it('J without the ball starts a slide tackle', () => {
+  it('lob key without the ball starts a slide tackle', () => {
     const { m, p } = setup();
     // give the ball to an opponent nearby
     const o = m.teams[1].players[5];
     o.pos.set(p.pos.x + 3, 0, p.pos.z);
     m.ball.place(o.pos.x + 0.4, o.pos.z);
     m.setOwner(o);
-    run(m, 0.05, { shoot: true });
+    run(m, 0.05, { lob: true });
     expect(p.action).toBe('slide');
+  });
+
+  it('shoot key without the ball tackles a nearby carrier', () => {
+    const { m, p } = setup();
+    const o = m.teams[1].players[5];
+    o.pos.set(p.pos.x + 1.2, 0, p.pos.z);
+    m.ball.place(o.pos.x + 0.4, o.pos.z);
+    m.setOwner(o);
+    run(m, 0.05, { shoot: true });
+    expect(p.action).toBe('tackle');
+  });
+
+  it('holding pass without the ball jockeys the carrier', () => {
+    const { m, p } = setup();
+    const o = m.teams[1].players[5];
+    o.pos.set(p.pos.x + 6, 0, p.pos.z);
+    m.ball.place(o.pos.x + 0.4, o.pos.z);
+    m.setOwner(o);
+    run(m, 0.5, { pass: true });
+    expect(p.jockey).toBe(true);
+    expect(p.pos.distanceTo(o.pos)).toBeLessThan(6);
+  });
+
+  it('chip key + shot lofts the ball', () => {
+    const { m } = setup();
+    run(m, 0.3, { shoot: true, chip: true });
+    run(m, 0.3, { chip: true });
+    expect(kicks(m)).toContain('chip');
+    expect(m.ball.vel.y).toBeGreaterThan(4);
+  });
+
+  it('sprinting drains stamina', () => {
+    const { m, p } = setup();
+    run(m, 4, { sprint: true, mx: 0, my: 1 });
+    expect(p.stamina).toBeLessThan(0.9);
   });
 
   it('a full AI-vs-human-idle match finishes without errors', () => {
