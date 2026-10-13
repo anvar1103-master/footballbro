@@ -55,3 +55,8 @@
 
 .bb-sw { position: absolute; left: 0; top: 0; display: none; background: #fff; color: #3a1670; font-size: 15px; padding: 0 8px;
   border-radius: 999px; border: 2px solid #3a1670; opacity: 0.9; }
+.bb-cross { display: none; position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px;
+  border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 0 2px rgba(58,22,112,0.7), inset 0 0 0 2px rgba(58,22,112,0.5); }
+.bb-cross::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; background: #ffd23f; border-radius: 50%; }
+.bb-lock { display: none; position: absolute; left: 50%; bottom: 52px; transform: translateX(-50%); font-family: var(--font-body); font-weight: 800;
+  background: #ffd23f; color: #3a1670; padding: 6px 16px; border-radius: 999px; animation: bb-pulse 1.2s infinite; }

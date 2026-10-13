@@ -3,15 +3,16 @@ import type { TeamInfo } from '../sim/team';
 import { Bro, BRO } from './bro';
 
 /**
- * Cartoon footballers built in code: big head with a face (googly eyes that follow the ball,
- * eyebrows, mouth), hair styles, kit with a number, arms, legs and boots. Animated procedurally on
+ * Crash-test-dummy footballers built in code: glossy plastic body with ball joints and the
+ * black-and-yellow target stickers, a face (eyes that follow the ball, brows, mouth), a team kit
+ * with a number, tapered arms and legs, mitten hands and studded boots. Animated procedurally on
  * top of the wobbly physics capsule: running stride, kicks with either foot, volleys and overhead
  * kicks, slide tackles, skill moves, grabs, flailing falls and goal celebrations — with springy
  * floppy arms and a bobbling head so everything stays a bit silly.
  */
 
-const SKIN = ['#f6d0b1', '#eab48c', '#d29b6e', '#a8714a', '#7a4b2c', '#5a3520', '#f1c27d'];
-const HAIR = ['#1c1410', '#3b2414', '#6b4423', '#b07a3a', '#e9c27a', '#111111', '#a3321d', '#ffffff', '#2b6cff', '#ff4fa3'];
+/** crash-test dummy plastics: mostly the classic yellow, some white / orange / blue-grey */
+const DUMMY = ['#f2c12e', '#f2c12e', '#f2c12e', '#f4b324', '#efefe8', '#ff9b30', '#a9bcd0'];
 const BOOTS = ['#151515', '#ffffff', '#ff3d00', '#1e88e5', '#ffd23f', '#3ee07a', '#ff4fa3'];
 const GK_KITS = ['#2ec4b6', '#ffd60a', '#222222', '#c77dff', '#ff8c42'];
 
@@ -26,6 +27,38 @@ function cap(r: number, len: number, m: THREE.Material, seg = 10) {
   me.castShadow = true;
   return me;
 }
+/** smooth revolved limb / body part from a (radius, y) profile */
+function lathe(profile: [number, number][], seg = 16) {
+  // bottom → top so the faces point outwards
+  const pts = [...profile].sort((a, b) => a[1] - b[1]).map(([r, y]) => new THREE.Vector2(r, y));
+  return new THREE.LatheGeometry(pts, seg);
+}
+
+let targetTex: THREE.CanvasTexture | null = null;
+/** the black-and-yellow quartered circle sticker of crash-test dummies */
+function targetMaterial() {
+  if (!targetTex) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d')!;
+    for (let i = 0; i < 4; i++) {
+      g.fillStyle = i % 2 ? '#111111' : '#ffd21f';
+      g.beginPath();
+      g.moveTo(32, 32);
+      g.arc(32, 32, 31, (i * Math.PI) / 2, ((i + 1) * Math.PI) / 2);
+      g.fill();
+    }
+    g.strokeStyle = '#111111';
+    g.lineWidth = 3;
+    g.beginPath();
+    g.arc(32, 32, 30, 0, Math.PI * 2);
+    g.stroke();
+    targetTex = new THREE.CanvasTexture(c);
+    targetTex.colorSpace = THREE.SRGBColorSpace;
+  }
+  return new THREE.MeshStandardMaterial({ map: targetTex, roughness: 0.5, polygonOffset: true, polygonOffsetFactor: -2 });
+}
+
 function ball(r: number, m: THREE.Material, w = 14, h = 10) {
   const me = new THREE.Mesh(new THREE.SphereGeometry(r, w, h), m);
   me.castShadow = true;
@@ -70,83 +103,6 @@ function shirtTexture(primary: string, trim: string, num: number, gk: boolean) {
   return t;
 }
 
-/** capsule whose UV v runs linearly with height (the stock UVs squeeze the straight part) */
-function linearUV(geo: THREE.CapsuleGeometry, r: number, len: number) {
-  const pos = geo.attributes.position, uv = geo.attributes.uv;
-  const h = len / 2 + r;
-  for (let i = 0; i < pos.count; i++) uv.setY(i, (pos.getY(i) + h) / (2 * h));
-  return geo;
-}
-
-function hair(style: number, color: string) {
-  const m = mat(color, 0.85);
-  const g = new THREE.Group();
-  const crop = () => {
-    const c = new THREE.Mesh(new THREE.SphereGeometry(0.158, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.36), m);
-    c.position.set(0, 0.035, -0.012);
-    c.castShadow = true;
-    g.add(c);
-    return c;
-  };
-  switch (style) {
-    case 0:
-      crop();
-      break;
-    case 1: {
-      crop();
-      for (let i = 0; i < 8; i++) {
-        const sp = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.12, 6), m);
-        const a = (i / 8) * Math.PI * 2;
-        sp.position.set(Math.cos(a) * 0.08, 0.15, Math.sin(a) * 0.08 - 0.02);
-        sp.rotation.set(Math.sin(a) * 0.6, 0, -Math.cos(a) * 0.6);
-        g.add(sp);
-      }
-      break;
-    }
-    case 2: {
-      const af = ball(0.21, m, 16, 12);
-      af.position.set(0, 0.07, -0.03);
-      g.add(af);
-      break;
-    }
-    case 3: {
-      for (let i = 0; i < 6; i++) {
-        const sp = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.1, 0.06), m);
-        const a = -0.6 + i * 0.32;
-        sp.position.set(0, Math.cos(a) * 0.16, Math.sin(a) * 0.16);
-        sp.rotation.x = a;
-        g.add(sp);
-      }
-      break;
-    }
-    case 4: {
-      crop();
-      const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.04, 0.16, 4, 8), m);
-      tail.position.set(0, -0.02, -0.17);
-      tail.rotation.x = 0.4;
-      tail.name = 'tail';
-      g.add(tail);
-      break;
-    }
-    case 5:
-      break; // shaved
-    case 6: {
-      crop();
-      const bun = ball(0.07, m);
-      bun.position.set(0, 0.15, -0.08);
-      g.add(bun);
-      break;
-    }
-    default: {
-      crop();
-      const band = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.018, 6, 24), mat('#ffffff', 0.6));
-      band.rotation.x = Math.PI / 2 - 0.15;
-      band.position.y = 0.04;
-      g.add(band);
-    }
-  }
-  return g;
-}
 
 class Spring {
   x = 0;
@@ -206,8 +162,10 @@ export class DudeActor {
     const trim = gk ? '#1b1b1b' : Math.abs(lum(info.secondary) - lum(primary)) > 0.25 ? info.secondary : lum(primary) > 0.5 ? '#1b1b1b' : '#ffffff';
     const shortsCol = gk ? '#1b1b1b' : trim;
     const socksCol = gk ? gkCol : info.accent && Math.abs(lum(info.accent) - lum(shortsCol)) > 0.15 ? info.accent : primary;
-    const skin = SKIN[Math.floor(rnd(1) * SKIN.length)];
-    const skinM = mat(skin, 0.55);
+    // crash-test dummy plastic (mostly the classic yellow)
+    const plastic = DUMMY[Math.floor(rnd(1) * DUMMY.length)];
+    const skinM = new THREE.MeshPhysicalMaterial({ color: plastic, roughness: 0.38, clearcoat: 0.7, clearcoatRoughness: 0.3 });
+    const jointM = new THREE.MeshStandardMaterial({ color: '#2b2f38', roughness: 0.45, metalness: 0.5 });
     const shirtM = mat(primary, 0.75);
     shirtM.map = shirtTexture(primary, trim, bro.number, gk);
     shirtM.color.set('#ffffff');
@@ -215,7 +173,9 @@ export class DudeActor {
     const shortsM = mat(shortsCol, 0.75);
     const socksM = mat(socksCol, 0.8);
     const bootM = mat(BOOTS[Math.floor(rnd(2) * BOOTS.length)], 0.35);
+    const studM = mat('#e8e8e8', 0.4);
     const gloveM = gk ? mat('#f2f2f2', 0.6) : skinM;
+    const target = targetMaterial();
     this.scale = 0.96 + rnd(3) * 0.1;
     this.celebrateStyle = Math.floor(rnd(4) * 3);
 
@@ -229,98 +189,118 @@ export class DudeActor {
     this.pelvis = new THREE.Group();
     this.pelvis.position.y = 0.93;
     this.rig.add(this.pelvis);
-    const shorts = cap(0.15, 0.06, shortsM, 14);
-    shorts.scale.set(1.22, 1, 0.86);
+    const shorts = new THREE.Mesh(lathe([[0.1, -0.13], [0.15, -0.1], [0.165, 0], [0.155, 0.08], [0.14, 0.11]]), shortsM);
+    shorts.scale.set(1.15, 1, 0.82);
+    shorts.castShadow = true;
     this.pelvis.add(shorts);
 
-    // spine + chest
+    // spine + chest: a shaped torso (wide shoulders, narrower waist)
     this.spine = new THREE.Group();
     this.spine.position.y = 0.05;
     this.pelvis.add(this.spine);
-    const torsoGeo = linearUV(new THREE.CapsuleGeometry(0.17, 0.26, 8, 20), 0.17, 0.26);
+    const torsoGeo = lathe([[0.0, -0.02], [0.14, 0.0], [0.15, 0.08], [0.165, 0.2], [0.185, 0.32], [0.18, 0.39], [0.14, 0.43], [0.06, 0.46], [0.0, 0.465]], 24);
+    {
+      // u around, v linear in height for the number texture
+      const pos = torsoGeo.attributes.position, uv = torsoGeo.attributes.uv;
+      for (let i = 0; i < pos.count; i++) uv.setY(i, (pos.getY(i) + 0.02) / 0.485);
+    }
     const torso = new THREE.Mesh(torsoGeo, shirtM);
-    torso.scale.set(1.2, 1, 0.78);
-    torso.position.y = 0.22;
+    torso.scale.set(1.18, 1, 0.74);
     torso.castShadow = true;
     const tOut = new THREE.Mesh(torsoGeo, OUTLINE);
-    tOut.scale.setScalar(1.05);
+    tOut.scale.setScalar(1.045);
     torso.add(tOut);
     this.spine.add(torso);
-    const neck = cap(0.055, 0.06, skinM, 8);
-    neck.position.y = 0.48;
-    this.spine.add(neck);
+    // segmented dummy neck
+    for (let i = 0; i < 2; i++) {
+      const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.05 - i * 0.004, 0.055 - i * 0.004, 0.035, 14), i ? skinM : jointM);
+      seg.position.y = 0.47 + i * 0.035;
+      this.spine.add(seg);
+    }
 
-    // head
+    // head: smooth egg with crash-test target stickers
     this.head = new THREE.Group();
     this.head.position.y = 0.5;
     this.spine.add(this.head);
-    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.15, 22, 16), skinM);
-    skull.scale.set(0.95, 1.05, 1);
-    skull.position.y = 0.14;
+    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.14, 28, 20), skinM);
+    skull.scale.set(0.9, 1.12, 0.98);
+    skull.position.y = 0.15;
     skull.castShadow = true;
     const hOut = new THREE.Mesh(skull.geometry, OUTLINE);
-    hOut.scale.setScalar(1.06);
+    hOut.scale.setScalar(1.055);
     skull.add(hOut);
     this.head.add(skull);
+    for (const s of [-1, 1]) {
+      const st = new THREE.Mesh(new THREE.CircleGeometry(0.045, 24), target);
+      st.position.set(s * 0.127, 0.16, -0.005);
+      st.rotation.y = s * Math.PI / 2;
+      this.head.add(st);
+    }
+    const crown = new THREE.Mesh(new THREE.CircleGeometry(0.04, 24), target);
+    crown.position.set(0, 0.305, -0.01);
+    crown.rotation.x = -Math.PI / 2;
+    this.head.add(crown);
+    // a centre seam over the head like the real dummies
+    const seam = new THREE.Mesh(new THREE.TorusGeometry(0.142, 0.004, 4, 40, Math.PI), jointM);
+    seam.rotation.y = Math.PI / 2;
+    seam.scale.set(1, 1.12, 0.98);
+    seam.position.y = 0.15;
+    this.head.add(seam);
     const face = new THREE.Group();
-    face.position.y = 0.14;
+    face.position.y = 0.15;
     this.head.add(face);
     for (const s of [-1, 1]) {
-      const eye = ball(0.042, EYE_W, 12, 10);
-      eye.scale.set(1, 1.2, 0.6);
-      eye.position.set(s * 0.057, 0.015, 0.13);
-      const pupil = ball(0.022, EYE_B, 10, 8);
-      pupil.position.set(0, 0, 0.034);
+      const eye = ball(0.036, EYE_W, 12, 10);
+      eye.scale.set(1, 1.15, 0.45);
+      eye.position.set(s * 0.05, 0.02, 0.122);
+      const pupil = ball(0.019, EYE_B, 10, 8);
+      pupil.position.set(0, 0, 0.032);
       eye.add(pupil);
       face.add(eye);
       this.eyes.push(eye);
       this.pupils.push(pupil);
-      const brow = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.014, 0.02), mat(HAIR[Math.floor(rnd(5) * 6)], 0.8));
-      brow.position.set(s * 0.058, 0.08, 0.137);
+      const brow = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.012, 0.016), jointM);
+      brow.position.set(s * 0.05, 0.075, 0.125);
       face.add(brow);
       this.brows.push(brow);
-      const ear = ball(0.032, skinM, 8, 6);
-      ear.scale.set(0.6, 1, 1);
-      ear.position.set(s * 0.145, 0.0, 0);
-      face.add(ear);
     }
-    const nose = ball(0.026, skinM, 8, 6);
-    nose.position.set(0, -0.005, 0.15);
-    nose.scale.set(1, 0.9, 1.2);
+    const nose = ball(0.02, skinM, 8, 6);
+    nose.position.set(0, -0.012, 0.135);
+    nose.scale.set(1, 1.1, 1);
     face.add(nose);
-    this.smile = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.008, 6, 12, Math.PI), MOUTH);
+    this.smile = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.007, 6, 12, Math.PI), MOUTH);
     this.smile.rotation.z = Math.PI;
-    this.smile.position.set(0, -0.05, 0.137);
-    this.ooh = ball(0.022, MOUTH, 10, 8);
+    this.smile.position.set(0, -0.055, 0.124);
+    this.ooh = ball(0.02, MOUTH, 10, 8);
     this.ooh.scale.set(1, 1.3, 0.5);
-    this.ooh.position.set(0, -0.06, 0.138);
+    this.ooh.position.set(0, -0.065, 0.126);
     this.ooh.visible = false;
     face.add(this.smile, this.ooh);
-    if (rnd(6) < 0.2) {
-      const tache = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.018, 0.02), mat(HAIR[Math.floor(rnd(5) * 6)], 0.8));
-      tache.position.set(0, -0.03, 0.145);
-      face.add(tache);
-    }
-    const hr = hair(Math.floor(rnd(7) * 8), HAIR[Math.floor(rnd(5) * HAIR.length)]);
-    hr.position.y = 0.14;
-    this.head.add(hr);
 
-    // arms: shoulder → elbow → hand
+    // arms: shoulder ball-joint → tapered upper arm → elbow joint → forearm → mitten hand
     const mkArm = (s: number): [Joint, Joint] => {
       const sh = new THREE.Group();
-      sh.position.set(s * 0.215, 0.39, 0);
-      const sleeve = cap(0.068, gk ? 0.2 : 0.08, sleeveM, 10);
-      sleeve.position.y = gk ? -0.12 : -0.07;
-      const upper = cap(0.052, 0.15, gk ? sleeveM : skinM, 8);
-      upper.position.y = -0.14;
+      sh.position.set(s * 0.215, 0.37, 0);
+      const ball1 = ball(0.07, sleeveM, 14, 10);
+      const sleeve = new THREE.Mesh(lathe([[0.072, 0], [0.068, -0.06], [0.064, gk ? -0.24 : -0.11], [0.0, gk ? -0.245 : -0.115]]), sleeveM);
+      sleeve.castShadow = true;
+      const upper = new THREE.Mesh(lathe([[0.056, -0.02], [0.052, -0.12], [0.045, -0.23], [0.0, -0.235]]), gk ? sleeveM : skinM);
+      upper.castShadow = true;
       const el = new THREE.Group();
-      el.position.y = -0.27;
-      const fore = cap(0.047, 0.16, gk ? sleeveM : skinM, 8);
-      fore.position.y = -0.11;
-      const hand = ball(0.058, gloveM, 10, 8);
-      hand.position.y = -0.25;
-      el.add(fore, hand);
-      sh.add(sleeve, upper, el);
+      el.position.y = -0.26;
+      const elbowJ = ball(0.05, jointM, 12, 8);
+      const fore = new THREE.Mesh(lathe([[0.046, 0], [0.044, -0.08], [0.036, -0.19], [0.0, -0.195]]), gk ? sleeveM : skinM);
+      fore.castShadow = true;
+      const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.025, 10), jointM);
+      wrist.position.y = -0.2;
+      const hand = ball(0.055, gloveM, 12, 10);
+      hand.scale.set(0.8, 1.15, 0.65);
+      hand.position.y = -0.255;
+      const thumb = cap(0.018, 0.035, gloveM, 6);
+      thumb.position.set(-s * 0.0, -0.24, 0.04);
+      thumb.rotation.x = 0.6;
+      el.add(elbowJ, fore, wrist, hand, thumb);
+      sh.add(ball1, sleeve, upper, el);
       this.spine.add(sh);
       return [sh, el];
     };
@@ -329,22 +309,31 @@ export class DudeActor {
     this.arm = [aL, aR];
     this.elbow = [eL, eR];
 
-    // legs: hip → knee → boot
+    // legs: hip → tapered thigh → knee joint with a target sticker → sock → boot with studs
     const mkLeg = (s: number): [Joint, Joint] => {
       const hip = new THREE.Group();
       hip.position.set(s * 0.095, -0.04, 0);
-      const short = cap(0.085, 0.1, shortsM, 10);
-      short.position.y = -0.07;
-      const thigh = cap(0.068, 0.22, skinM, 8);
-      thigh.position.y = -0.2;
+      const short = new THREE.Mesh(lathe([[0.09, 0.02], [0.092, -0.06], [0.088, -0.15], [0.0, -0.155]]), shortsM);
+      short.castShadow = true;
+      const thigh = new THREE.Mesh(lathe([[0.078, -0.05], [0.074, -0.18], [0.06, -0.37], [0.0, -0.375]]), skinM);
+      thigh.castShadow = true;
       const kn = new THREE.Group();
       kn.position.y = -0.41;
-      const shin = cap(0.06, 0.26, socksM, 8);
-      shin.position.y = -0.2;
-      const boot = cap(0.062, 0.12, bootM, 8);
-      boot.rotation.x = Math.PI / 2;
-      boot.position.set(0, -0.43, 0.05);
-      kn.add(shin, boot);
+      const kneeJ = ball(0.062, jointM, 12, 8);
+      const kneeT = new THREE.Mesh(new THREE.CircleGeometry(0.032, 20), target);
+      kneeT.position.set(0, 0.0, 0.063);
+      const shin = new THREE.Mesh(lathe([[0.06, -0.03], [0.062, -0.12], [0.048, -0.32], [0.045, -0.37], [0.0, -0.375]]), socksM);
+      shin.castShadow = true;
+      const boot = new THREE.Mesh(new THREE.SphereGeometry(0.075, 16, 10), bootM);
+      boot.scale.set(0.85, 0.6, 1.65);
+      boot.position.set(0, -0.415, 0.045);
+      boot.castShadow = true;
+      const sole = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.02, 0.24), studM);
+      sole.position.set(0, -0.455, 0.045);
+      const laces = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.01, 0.08), studM);
+      laces.position.set(0, -0.375, 0.07);
+      laces.rotation.x = -0.35;
+      kn.add(kneeJ, kneeT, shin, boot, sole, laces);
       hip.add(short, thigh, kn);
       this.pelvis.add(hip);
       return [hip, kn];
