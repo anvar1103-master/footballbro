@@ -58,8 +58,13 @@ export interface PartyInput {
   switch: boolean;
   /** skill move (feint) */
   skill: boolean;
+  /** mouse aim direction in WORLD space (0,0 = no mouse aim: use the stick / facing) */
+  aimX: number;
+  aimZ: number;
 }
-export const NO_INPUT: PartyInput = { mx: 0, mz: 0, sprint: false, jump: false, kick: false, pass: false, lob: false, tackle: false, grab: false, switch: false, skill: false };
+export const NO_INPUT: PartyInput = { mx: 0, mz: 0, sprint: false, jump: false, kick: false, pass: false, lob: false, tackle: false, grab: false, switch: false, skill: false, aimX: 0, aimZ: 0 };
+/** indoor hall: walls go up to the roof, so the ball never leaves */
+export const HALL_H = 9;
 
 export type EventKind = 'mega' | 'lowgrav' | 'ice' | 'turbo' | 'sweeper';
 export const EVENT_INFO: Record<EventKind, { title: string; sub: string }> = {
@@ -139,7 +144,7 @@ export class PartyWorld {
   /** render-time slow motion request (seconds left) */
   slowmo = 0;
   /** human buffered actions: fire as soon as the ball is in reach */
-  buffer: { kind: 'kick' | 'pass' | 'lob'; power: number; t: number; aim: Vector3 } | null = null;
+  buffer: { kind: 'kick' | 'pass' | 'lob'; power: number; t: number; aim: Vector3; mouse: boolean } | null = null;
   /** a keeper holding the ball */
   gkHold: { gk: Bro; t: number } | null = null;
   private prevInput: PartyInput = { ...NO_INPUT };
@@ -172,7 +177,8 @@ export class PartyWorld {
     this.world = new PWorld(GRAVITY);
     const W = this.world;
     W.ground();
-    const L = f.length / 2, Wd = f.width / 2, c = f.corner, H = 5; // physics walls are taller than the inflatables
+    const L = f.length / 2, Wd = f.width / 2, c = f.corner, H = HALL_H; // walls up to the roof
+    W.box('wall', L + 4, 0.5, Wd + 4, 0, HALL_H + 0.5, 0); // the roof
     // long sides
     W.box('wall', L - c, H / 2, 0.5, 0, H / 2, -Wd - 0.5);
     W.box('wall', L - c, H / 2, 0.5, 0, H / 2, Wd + 0.5);
@@ -849,6 +855,20 @@ export class PartyWorld {
     return this.strike(b, dir.multiplyScalar(v).setY(airborne ? 1 : 0.3), 'pass', undefined, !airborne);
   }
 
+  /** cos of the angle between `dir` and the line from `b` to `m` */
+  coneTo(b: Bro, m: Bro, dir: Vector3) {
+    const p = b.position(), q = m.position();
+    const dx = q.x - p.x, dz = q.z - p.z;
+    return (dx * dir.x + dz * dir.z) / (Math.hypot(dx, dz) || 1);
+  }
+
+  /** ground pass into space along `dir` (a through ball for whoever gets there) */
+  passInto(b: Bro, dir: Vector3, dist = 13) {
+    const d = dir.clone().setY(0).normalize();
+    const v = Math.min(22, Math.sqrt(16 + 2 * BALL_P.rollC * dist) * (1 + BALL_P.dragK * dist * 0.5));
+    return this.strike(b, d.multiplyScalar(v).setY(0.3), 'pass', undefined, true);
+  }
+
   /** lofted ball (cross / chip) landing at `target` */
   lob(b: Bro, target: Vector3) {
     const bp = this.ballPos();
@@ -1081,8 +1101,9 @@ export class PartyWorld {
     b.intent = { moveX: input.mx, moveZ: input.mz, sprint: input.sprint, jump: input.jump, dive: input.tackle && !prev.tackle };
     if (this.phase === 'goal') return;
     const stick = new Vector3(input.mx, 0, input.mz);
-    const aim = stick.lengthSq() > 0.09 ? stick.clone().normalize() : b.face.clone();
-    if (stick.lengthSq() > 0.09) this.lastAim.copy(aim);
+    const mouse = Math.hypot(input.aimX, input.aimZ) > 0.5;
+    const aim = mouse ? new Vector3(input.aimX, 0, input.aimZ).normalize() : stick.lengthSq() > 0.09 ? stick.clone().normalize() : b.face.clone();
+    if (mouse || stick.lengthSq() > 0.09) this.lastAim.copy(aim);
     else this.lastAim.set(0, 0, 0);
     // grab: hold to hang on
     if (input.grab && !prev.grab) this.tryGrab(b);
@@ -1093,25 +1114,28 @@ export class PartyWorld {
       b.charging = 'kick';
       b.kickCharge = Math.min(0.8, b.kickCharge + dt);
     } else if (!input.kick && prev.kick && b.charging === 'kick') {
-      this.buffer = { kind: 'kick', power: Math.min(1, b.kickCharge / 0.8), t: 0, aim };
+      this.buffer = { kind: 'kick', power: Math.min(1, b.kickCharge / 0.8), t: 0, aim, mouse };
       b.charging = null;
       b.kickCharge = 0;
     } else if (!input.kick) b.charging = null;
-    if (input.pass && !prev.pass) this.buffer = { kind: 'pass', power: 0, t: 0, aim };
-    if (input.lob && !prev.lob) this.buffer = { kind: 'lob', power: 0, t: 0, aim };
+    if (input.pass && !prev.pass) this.buffer = { kind: 'pass', power: 0, t: 0, aim, mouse };
+    if (input.lob && !prev.lob) this.buffer = { kind: 'lob', power: 0, t: 0, aim, mouse };
     // buffered action fires as soon as the ball is in reach (forgiving timing)
     const buf = this.buffer;
     if (buf) {
       buf.t += dt;
-      if (stick.lengthSq() > 0.09) buf.aim.copy(aim);
+      if (mouse || stick.lengthSq() > 0.09) buf.aim.copy(aim);
       if (this.inReach(b)) {
         this.buffer = null;
         if (buf.kind === 'kick') this.smartKick(b, buf.power, buf.aim);
         else if (buf.kind === 'pass') {
           const m = this.bestMate(b, false, buf.aim);
-          if (m) this.passTo(b, m);
-          else this.shootAt(b, 0.2, buf.aim, 'pass');
+          // with the mouse the pass goes where you point: to a mate in that direction, else into space
+          if (m && (!buf.mouse || this.coneTo(b, m, buf.aim) > 0.8)) this.passTo(b, m);
+          else this.passInto(b, buf.aim);
         } else this.lob(b, this.lobTarget(b, buf.aim));
+        // turn towards where the ball went
+        if (buf.mouse) b.face.copy(buf.aim);
       } else if (buf.t > 0.6) {
         this.buffer = null;
         b.kickKind = buf.kind === 'kick' ? 'shot' : buf.kind;

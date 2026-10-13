@@ -12,27 +12,15 @@ import { DudeActor, makeCrown } from './dude';
 import { ballTexture } from '../render/ball';
 import { ARENA, PartyEvent, PartyWorld } from './world';
 
-/** bright sky dome: deep blue on top, pale at the horizon, pastel below the island */
-function makeSky() {
-  const mat = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    depthWrite: false,
-    fog: false,
-    uniforms: { top: { value: new THREE.Color('#1f7bff') }, mid: { value: new THREE.Color('#a8e0ff') }, bottom: { value: new THREE.Color('#ffd9ec') } },
-    vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-    fragmentShader: `uniform vec3 top, mid, bottom; varying vec3 vP;
-      void main(){ float h = vP.y; vec3 c = h > 0.0 ? mix(mid, top, pow(clamp(h * 1.4, 0.0, 1.0), 0.7)) : mix(mid, bottom, clamp(-h * 2.0, 0.0, 1.0));
-      gl_FragColor = vec4(c, 1.0); }`,
-  });
-  return new THREE.Mesh(new THREE.SphereGeometry(900, 32, 16), mat);
-}
-
 /** Third-person chase camera behind the human's player, looking down-field (or a TV view). */
 export class ChaseCamera {
   camera: THREE.PerspectiveCamera;
   /** 0 = close behind, 1 = high behind, 2 = TV side view */
   mode = 0;
   yaw = 0;
+  /** mouse-look: the mouse turns the camera; the crosshair (screen centre) is where you pass/shoot */
+  mouseLook = false;
+  pitch = 0.28;
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
   constructor(aspect: number) {
@@ -42,7 +30,26 @@ export class ChaseCamera {
   forward() {
     return new THREE.Vector3(Math.cos(this.yaw), 0, Math.sin(this.yaw));
   }
+  /** mouse movement (pixels) */
+  turn(dx: number, dy: number) {
+    this.yaw += dx * 0.0032;
+    this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.0022, 0.02, 0.9);
+  }
   follow(target: THREE.Vector3, ball: THREE.Vector3, attackDir: number, dt: number, snap = false) {
+    if (this.mouseLook && this.mode < 2) {
+      if (snap) this.yaw = attackDir > 0 ? 0 : Math.PI;
+      const f = this.forward();
+      const dist = this.mode === 0 ? 6.4 : 10.5;
+      const wantPos = target.clone().addScaledVector(f, -dist * Math.cos(this.pitch)).setY(1.6 + dist * Math.sin(this.pitch));
+      const wantLook = target.clone().addScaledVector(f, 7).setY(1.1);
+      this.camera.fov = 58;
+      this.camera.updateProjectionMatrix();
+      this.pos.lerp(wantPos, snap ? 1 : 1 - Math.exp(-dt * 14));
+      this.look.lerp(wantLook, snap ? 1 : 1 - Math.exp(-dt * 16));
+      this.camera.position.copy(this.pos);
+      this.camera.lookAt(this.look);
+      return;
+    }
     // base: look towards the goal we attack; lean a bit towards the ball
     const base = attackDir > 0 ? 0 : Math.PI;
     const toBall = Math.atan2(ball.z - target.z, ball.x - target.x);
@@ -98,6 +105,8 @@ export class PartyRenderer {
   particles = new Particles(1400);
   arena: Arena;
   marker: THREE.Mesh;
+  /** ground chevrons showing the mouse aim */
+  aimArrow: THREE.Group;
   crown: THREE.Group;
   private crownPos = new THREE.Vector3();
   sun: THREE.DirectionalLight;
@@ -118,15 +127,15 @@ export class PartyRenderer {
     this.renderer = r;
     this.cam = new ChaseCamera(container.clientWidth / container.clientHeight);
 
-    this.scene.fog = new THREE.Fog(0xcdeeff, 120, 420);
-    this.scene.add(makeSky());
+    // indoor hall: dark shell, light from the roof panels
+    this.scene.background = new THREE.Color('#22262e');
     const pm = new THREE.PMREMGenerator(r);
     this.scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.35;
+    this.scene.environmentIntensity = 0.45;
     pm.dispose();
-    this.scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x6fbf5a, 0.65));
-    const sun = new THREE.DirectionalLight(0xfff1dc, 2.8);
-    sun.position.set(-18, 40, 22);
+    this.scene.add(new THREE.HemisphereLight(0xf4f1ea, 0x3d6b33, 0.9));
+    const sun = new THREE.DirectionalLight(0xfff6e8, 2.3);
+    sun.position.set(-6, 40, 10);
     sun.castShadow = true;
     Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 26, bottom: -26, near: 5, far: 120 });
     sun.shadow.mapSize.set(quality === 'high' ? 4096 : 2048, quality === 'high' ? 4096 : 2048);
@@ -176,6 +185,22 @@ export class PartyRenderer {
     this.marker = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 40), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.85, depthWrite: false }));
     this.marker.rotation.x = -Math.PI / 2;
     this.scene.add(this.marker);
+    this.aimArrow = new THREE.Group();
+    const chev = new THREE.Shape();
+    chev.moveTo(0, -0.42);
+    chev.lineTo(0.48, 0);
+    chev.lineTo(0, 0.42);
+    chev.lineTo(0.16, 0);
+    chev.closePath();
+    const chevGeo = new THREE.ShapeGeometry(chev);
+    chevGeo.rotateX(Math.PI / 2);
+    for (let i = 0; i < 3; i++) {
+      const m = new THREE.Mesh(chevGeo, new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.95 - i * 0.25, depthWrite: false, side: THREE.DoubleSide }));
+      m.position.set(1.0 + i * 0.7, 0.05, 0);
+      this.aimArrow.add(m);
+    }
+    this.aimArrow.visible = false;
+    this.scene.add(this.aimArrow);
     this.crown = makeCrown();
     this.crown.scale.setScalar(1.3);
     this.scene.add(this.crown);
@@ -228,13 +253,19 @@ export class PartyRenderer {
     this.arena.update(dt, this.time, w.sweeper);
     const c = w.controlled;
     this.marker.visible = !!c;
+    this.aimArrow.visible = !!c && this.cam.mouseLook && this.cam.mode < 2 && c.state === 'up';
+    if (this.aimArrow.visible) {
+      const cp = c!.position();
+      this.aimArrow.position.set(cp.x, 0, cp.z);
+      this.aimArrow.rotation.y = -this.cam.yaw;
+    }
     const focus = c ? c.position() : bp.clone();
     this.crown.visible = !!c;
     if (c) {
       this.marker.position.set(focus.x, 0.04, focus.z);
       this.marker.scale.setScalar(1 + Math.sin(this.time * 5) * 0.06);
       // the crown flies over to the player you switched to
-      const want = focus.clone().add(new THREE.Vector3(0, 1.32 + Math.sin(this.time * 3) * 0.06, 0));
+      const want = focus.clone().add(new THREE.Vector3(0, 1.12 + Math.sin(this.time * 3) * 0.05, 0));
       if (this.crownPos.lengthSq() === 0) this.crownPos.copy(want);
       this.crownPos.lerp(want, 1 - Math.exp(-dt * 12));
       this.crown.position.copy(this.crownPos);

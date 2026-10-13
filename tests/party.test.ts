@@ -253,6 +253,39 @@ describe('bean ball', () => {
     expect(caught).toBe(true);
   });
 
+  it('mouse aim: LMB pass goes where you point (into space), RMB shot follows the aim', async () => {
+    const { w, c, park } = await sandbox(22);
+    // point 60° to the left of where the player faces: no mate there → pass into space along the aim
+    const aim = { aimX: Math.cos(1.05), aimZ: Math.sin(1.05) };
+    w.step(PARTY_DT, { ...NO_INPUT, ...aim, pass: true });
+    park([c]);
+    const v = w.ballVel();
+    expect(v.length()).toBeGreaterThan(4);
+    expect(Math.abs(Math.atan2(v.z, v.x) - 1.05)).toBeLessThan(0.15);
+    const s2 = await sandbox(23);
+    const aim2 = { aimX: Math.cos(-0.5), aimZ: Math.sin(-0.5) };
+    for (let t = 0; t < 0.4; t += PARTY_DT) s2.w.step(PARTY_DT, { ...NO_INPUT, ...aim2, kick: true });
+    s2.w.step(PARTY_DT, { ...NO_INPUT, ...aim2 });
+    const v2 = s2.w.ballVel();
+    expect(Math.hypot(v2.x, v2.z)).toBeGreaterThan(15);
+    expect(Math.abs(Math.atan2(v2.z, v2.x) + 0.5)).toBeLessThan(0.2);
+  });
+
+  it('the hall has a roof: a ball blasted upwards comes back down inside', async () => {
+    const w = await world(24);
+    run(w, 2.6);
+    w.events.length = 0;
+    w.ball.setTranslation({ x: 0, y: 2, z: 0 });
+    w.ball.setLinvel({ x: 3, y: 30, z: 2 });
+    let maxY = 0;
+    for (let t = 0; t < 3; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      maxY = Math.max(maxY, w.ballPos().y);
+    }
+    expect(maxY).toBeLessThan(9.1);
+    expect(w.events.filter((e) => e.type === 'drop').length).toBe(0);
+  });
+
   it('a ball over the goal line counts and the next kick-off follows', async () => {
     const w = await world(12);
     run(w, 2.6);

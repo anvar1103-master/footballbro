@@ -1,15 +1,18 @@
 # Footballbro — project map for Claude
 
 ## TWO GAMES IN THIS REPO — read first
-- **Footballbro = the CURRENT game: funny third-person arcade football with cartoon footballers.** `index.html` → `src/party/`.
-  Procedural cartoon players (arms, legs, big heads with faces, hair, kits — no assets) on wobbly physics bodies,
+- **Footballbro = the CURRENT game: funny third-person arcade football with crash-test-dummy footballers.** `index.html` → `src/party/`.
+  Procedural dummies (yellow plastic, ball joints, target stickers, faces, kits — no assets) on wobbly physics bodies,
   you control one player (crown, Q switches) in a 3/4/5-a-side team incl. keeper vs AI, normal-size ball at the feet,
   skill moves, aimed + curled shots, volleys, bicycle kicks, headers, slide tackles, shirt grabs, chaos events,
-  walled sky-island arena (no outs, no fouls, no offside), ball dropped from the sky at kick-offs, golden goal.
+  indoor football hall (grass, boards, glass walls up to a roof — no outs, no fouls, no offside), ball dropped from
+  the roof at kick-offs, golden goal. Default controls: mouse-look camera + crosshair, LMB pass, RMB shot, WASD.
   Playable link: https://claude.ai/artifact/BCqgxNdt5aL2t2m8hSNK5v · GitHub Pages: https://anvar1103-master.github.io/footballbro/
 - History / user decisions: (1) realistic sim with real rules + Mixamo athletes → REJECTED ("FIFA clone, unplayable");
   (2) Fall Guys jelly beans with a giant ball → liked the fun, but "still a Fall Guys clone": wants normal little people
   with arms/legs that move funnily, more ball control, skill moves and beautiful goals. Keep it silly + good-looking.
+  (3) then: play with the mouse (camera + aim, LMB pass, RMB shot), crash-test-dummy look, indoor hall without
+  stands/fans (don't spend effort on crowds), keep the sweeper ("вертушка") event. Mobile port = later, not now.
 - **Soccerbro = the OLD FIFA-style game**, kept only as a library of ready code (ball physics, cloth net — the user likes
   the goal net —, ball texture, sounds, particles). `classic.html` → `src/main.ts`, `src/sim/`, `src/render/`, `src/ui/`.
   Old link: https://claude.ai/artifact/1pQLJehMiRup8dydP6x37b. Don't develop it further unless asked.
@@ -22,7 +25,9 @@ phys.ts   — thin layer over cannon-es (pure JS! WASM is blocked by the artifac
 bro.ts    — Bro = player body: capsule (r .36, 1.52 m) kept upright by under-damped PD torque (= wobble), run impulse above
             COM (leans), states up/down/getup/dive, jump, stamina; speedMul/accelMul (events, grabs), grabbing, celebrate,
             kickKind/kickSide (animation), skill {rainbow|cut|turn}, fooled (wrong-footed), catchCd (GK), landT (bicycle).
-world.ts  — PartyWorld: ARENA 50×32 (also a FieldDims for GoalNet), walls + chamfered corners, goals 6×2.4 m, ball r .17.
+world.ts  — PartyWorld: ARENA 50×32 (also a FieldDims for GoalNet), walls (HALL_H 9 m) + roof + chamfered corners,
+            goals 6×2.4 m, ball r .17. PartyInput.aimX/aimZ = mouse aim (world); with it LMB pass goes to a mate in
+            that direction (coneTo > 0.8) or passInto space, RMB shot = smartKick along the aim.
             Phases countdown(2.4 s, ball hovers) → play → goal(3.6 s, slow-mo, losers flop) → over; golden goal.
             Actions: shootAt(aim) — aim assist into the frame, aiming wide of a post adds Magnus curl back in, power =
             pace + height; smartKick picks volley (ball in the air) / bicycle (ball at chest height, back to goal) / shot;
@@ -36,17 +41,21 @@ world.ts  — PartyWorld: ARENA 50×32 (also a FieldDims for GoalNet), walls + c
 brain.ts  — AI: chaser (gets behind the ball, dribbles, shoots at the corner away from the keeper, volleys, skill moves
             when blocked, passes, lobs from wide, tackles/grabs the carrier), keeper() (line, rush, dive at predicted
             shot point), receivers meet passes (receivePoint), supporters spread ahead. Uses w.rng (deterministic tests).
-dude.ts   — DudeActor: procedural cartoon footballer. Hierarchy root(capsule) → flip (slide tackles) → rig (feet y=0) →
+dude.ts   — DudeActor: procedural crash-test-dummy footballer (lathe-shaped torso/limbs, ball joints, target stickers). Hierarchy root(capsule) → flip (slide tackles) → rig (feet y=0) →
             pelvis → spine → head/arms; pelvis → legs (hip → knee → boot). Kit texture with number (linear UVs), outline
-            hulls, face (eyes follow the ball, brows, mouth), 8 hair styles. Pose targets per state (run stride, kicks per
+            hulls, face (eyes follow the ball, brows, mouth), plastic colours DUMMY[]. Pose targets per state (run stride, kicks per
             foot/kind, bicycle flip, slide, GK dive, skills, grab, fooled, windmill when off balance, celebrations) are
             smoothed into joint rotations. Conventions: face +z, left = +x; limb rot.x + = backwards, spine rot.x + = lean fwd.
             makeCrown() floats over the controlled player.
-arena.ts  — sky island: pitch texture, extruded slab + rock cone, candy-striped inflatable tubes, goals + arches,
-            sweeper bar, spectator beans (instanced), balloons, clouds, mini islands.
-view.ts   — PartyRenderer + ChaseCamera (behind the bean looking at the attacked goal, biased to the ball, backs off
-            when the ball is behind; V: close / high / TV). Reuses GoalNet (render/net.ts) and Particles.
+arena.ts  — indoor hall: grass (pitch texture + blade-detail shader), padded ad boards, glass walls with mullions up
+            to the roof, steel trusses + emissive light panels (pulse on goals), white goals, hazard-striped sweeper bar.
+view.ts   — PartyRenderer + ChaseCamera: mouseLook mode (turn(dx,dy) yaw/pitch, crosshair = screen centre = aim,
+            ground chevrons show it) or auto mode for keyboard layouts (behind the player looking at the attacked goal,
+            biased to the ball; V: close / high / TV). Dark hall background, overhead light. Reuses GoalNet (render/net.ts) and Particles.
 main.ts   — menu (teams 3/4/5, length, difficulty, layout), HUD (bean.css), sounds, countdown, events, pause, end.
+            Mouse layout (default): pointer lock on click (fallback: edge-turn when lock is refused, e.g. in a frame),
+            mouse buttons are fed into the key set as 'Mouse0/1/2'; Esc releases the mouse and pauses.
+            Mouse keys: WASD run, Space jump, Shift sprint, LMB pass, RMB shot (hold), wheel/C lob, E tackle, F skill, R grab, Q switch.
             Keys (arrows layout): arrows run, Shift sprint, Space/W jump, D kick (hold; arrows aim), S pass, A lob/chip,
             E tackle, F skill, R grab, Q switch. WASD layout: J kick, K pass, L lob, I tackle, H skill, U grab, Q/O switch.
 Switching: Q → pickSwitch() (teammate on the ball, else closest to it); presses within ~1.8 s cycle to the next-best.
