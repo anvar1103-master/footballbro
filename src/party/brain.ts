@@ -38,7 +38,7 @@ function chaserOf(w: PartyWorld, team: number) {
     if (b.state === 'down') continue;
     const p = b.position();
     let t = Math.hypot(bp.x - p.x, bp.z - p.z) / 7;
-    if (b.number === 1) t += 1.2; // the back bean stays home unless it is right there
+    if (b.role === 'GK') continue; // keepers keep goal
     if (b === w.controlled) t -= 0.3; // humans tend to go for it themselves
     if (t < bt) {
       bt = t;
@@ -161,9 +161,19 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
         const t = (op.x - p.x) * b.face.x + (op.z - p.z) * b.face.z;
         if (t > 0 && t < 3 && Math.abs((op.x - p.x) * b.face.z - (op.z - p.z) * b.face.x) < 1.2) blocked = true;
       }
-      if (distGoal < 17 && facingGoal > 0.3 && w.rng.next() < 0.55) {
-        const z = (w.rng.next() * 2 - 1) * (ARENA.goalHalfW - 1.1) * sk.aim;
-        w.shoot(b, Math.min(1, 0.45 + distGoal / 30 + w.rng.next() * 0.2), z);
+      // aim for the corner away from their keeper
+      const gk = w.teamBros(1 - b.team).find((q) => q.role === 'GK');
+      const corner = -Math.sign((gk?.position().z ?? 0) - bp.z * 0.2 || w.rng.next() - 0.5) * (ARENA.goalHalfW - 0.5) * (0.6 + 0.4 * sk.aim);
+      const airborne = bp.y - w.ballR > 0.25;
+      if (airborne && distGoal < 20 && w.rng.next() < 0.6) {
+        // volley / overhead kick
+        w.smartKick(b, 0.8, new Vector3(gx - bp.x, 0, corner - bp.z));
+      } else if (distGoal < 18 && facingGoal > 0.3 && w.rng.next() < 0.5) {
+        w.shoot(b, Math.min(1, 0.35 + distGoal / 28 + w.rng.next() * 0.2), corner);
+      } else if (blocked && w.holder === b && w.rng.next() < 0.3 * sk.aggro) {
+        // try to beat him with a skill move
+        const side = new Vector3(-b.face.z, 0, b.face.x).multiplyScalar(w.rng.chance(0.5) ? 1 : -1);
+        w.doSkill(b, w.rng.chance(0.35) ? b.face.clone() : side);
       } else if ((blocked || facingGoal < -0.2) && w.rng.next() < 0.6) {
         const mate = w.bestMate(b, true);
         if (mate) w.passTo(b, mate);
@@ -177,31 +187,24 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
     return;
   }
 
-  // back bean: between the ball and our goal, close to the goal mouth
-  const isBack = b === mates.find((q) => q.number === 1) || (mates.length > 1 && b === mates[0]);
-  if (isBack) {
-    m.role = 'back';
-    const t = Math.min(0.35, Math.max(0.12, Math.abs(bp.x - ogx) / 60));
-    m.target.set(ogx + (bp.x - ogx) * t, 0, Math.max(-ARENA.goalHalfW, Math.min(ARENA.goalHalfW, bp.z * 0.5)));
-    // ball flying at our goal: throw yourself at it
-    const dBall = Math.hypot(bp.x - p.x, bp.z - p.z);
-    if (Math.sign(bv.x) === Math.sign(ogx) && Math.abs(bv.x) > 6 && dBall < 4 && dBall > 1.2) {
-      b.face.set(bp.x - p.x, 0, bp.z - p.z).normalize();
-      pendingDive.add(b);
-    }
-    if (Math.abs(bp.x - ogx) < 12) m.sprint = true;
-    // clear it if it is at our feet
-    if (w.inReach(b)) {
-      const mate = w.bestMate(b, true);
-      if (mate && w.rng.next() < 0.5) w.passTo(b, mate);
-      else w.shoot(b, 0.9);
-    }
+  if (b.role === 'GK') {
+    keeper(w, b, m);
+    return;
+  }
+
+  // a pass is coming my way: go and meet it
+  const meet = receivePoint(w, b);
+  if (meet) {
+    m.role = 'support';
+    m.target.copy(meet);
+    m.sprint = true;
+    b.face.set(bp.x - p.x, 0, bp.z - p.z).normalize();
     return;
   }
 
   // supporters: spread out ahead of the ball, keep away from the chaser
   m.role = 'support';
-  const sup = mates.filter((q) => q !== chaser && q.number !== 1);
+  const sup = mates.filter((q) => q !== chaser && q.role !== 'GK');
   const i = Math.max(0, sup.indexOf(b));
   const n = Math.max(1, sup.length);
   const attacking = (w.holder?.team ?? w.lastTouch?.team ?? b.team) === b.team;
@@ -227,4 +230,77 @@ export function consumeDive(b: Bro) {
     return true;
   }
   return false;
+}
+
+/** keeper: on the line between ball and goal centre, rushes out at loose balls, dives at shots */
+function keeper(w: PartyWorld, b: Bro, m: Mind) {
+  m.role = 'back';
+  const p = b.position();
+  const bp = w.ballPos();
+  const bv = w.ballVel();
+  const ogx = w.ownGoalX(b.team);
+  const out = -Math.sign(ogx); // towards the field
+  m.sprint = false;
+  if (w.gkHold?.gk === b) {
+    m.target.copy(p);
+    b.face.set(out, 0, 0);
+    return;
+  }
+  const lim = ARENA.goalHalfW - 0.35;
+  m.target.set(ogx + out * 1.0, 0, Math.max(-lim, Math.min(lim, bp.z * 0.45)));
+  const dBall = Math.hypot(bp.x - p.x, bp.z - p.z);
+  const inBox = Math.abs(bp.x - ogx) < 8 && Math.abs(bp.z) < 8;
+  // shot coming: predict where it crosses and dive there
+  if (Math.sign(bv.x) === Math.sign(ogx) && Math.abs(bv.x) > 6) {
+    const tt = (p.x - bp.x) / bv.x;
+    const zPred = bp.z + bv.z * tt;
+    if (tt > 0 && tt < 1.2 && Math.abs(zPred) < ARENA.goalHalfW + 1.2) {
+      m.target.set(p.x, 0, Math.max(-lim - 0.5, Math.min(lim + 0.5, zPred)));
+      m.sprint = true;
+      if (tt < 0.55 && Math.abs(zPred - p.z) > 0.8 && bp.y < 2.6) {
+        b.face.set(bv.x * 0.15, 0, zPred - p.z).normalize();
+        pendingDive.add(b);
+      }
+      return;
+    }
+  }
+  // loose ball in the box: come and get it
+  if (inBox && !w.holder && dBall < 6) {
+    m.target.set(bp.x, 0, bp.z);
+    m.sprint = true;
+  } else if (inBox && w.holder && w.holder.team !== b.team && dBall < 3) {
+    // 1-on-1: close the angle and dive at his feet
+    m.target.set(bp.x, 0, bp.z);
+    m.sprint = true;
+    if (dBall < 2.2 && dBall > 1.0 && w.rng.next() < 0.3) {
+      b.face.set(bp.x - p.x, 0, bp.z - p.z).normalize();
+      pendingDive.add(b);
+    }
+  }
+  if (w.inReach(b) && !w.gkHold) {
+    const mate = w.bestMate(b, true);
+    if (mate && w.rng.next() < 0.5) w.passTo(b, mate);
+    else w.lob(b, w.lobTarget(b));
+  }
+}
+
+/** if a team-mate's pass is rolling past, the point where `b` should meet it */
+function receivePoint(w: PartyWorld, b: Bro) {
+  if (w.holder || w.lastTouch?.team !== b.team || w.lastTouch === b) return null;
+  const bp = w.ballPos();
+  const bv = w.ballVel();
+  const sp = Math.hypot(bv.x, bv.z);
+  if (sp < 2.5) return null;
+  const p = b.position();
+  // closest approach of the ball's ground path within the next 2.5 s
+  const t = Math.max(0, Math.min(2.5, ((p.x - bp.x) * bv.x + (p.z - bp.z) * bv.z) / (sp * sp)));
+  const cx = bp.x + bv.x * t, cz = bp.z + bv.z * t;
+  if (Math.hypot(cx - p.x, cz - p.z) > 5) return null;
+  // nobody of ours closer to that point
+  for (const q of w.teamBros(b.team)) {
+    if (q === b || q === w.lastTouch || q.role === 'GK') continue;
+    const qp = q.position();
+    if (Math.hypot(cx - qp.x, cz - qp.z) < Math.hypot(cx - p.x, cz - p.z) - 0.5) return null;
+  }
+  return new Vector3(cx - (bv.x / sp) * 0.6, 0, cz - (bv.z / sp) * 0.6);
 }

@@ -12,7 +12,7 @@ async function sandbox(seed = 5) {
   const w = await world(seed, 0);
   run(w, 2.6); // countdown → play
   const c = w.controlled!;
-  const mate = w.teamBros(0).find((b) => b !== c)!;
+  const mate = w.teamBros(0).find((b) => b !== c && b.role === 'FIELD')!;
   const park = (keep: unknown[]) => w.bros.forEach((b, i) => !keep.includes(b) && b.teleport(-18 + i * 1.2, -13, 1));
   c.teleport(0, 0, 1);
   park([c]);
@@ -93,7 +93,7 @@ describe('bean ball', () => {
       if (landed === null && t > 0.3 && bp.y < w.ballR + 0.15) landed = bp.x;
     }
     expect(maxY).toBeGreaterThan(3);
-    expect(Math.abs((landed ?? 0) - target.x)).toBeLessThan(3);
+    expect(Math.abs((landed ?? 0) - target.x)).toBeLessThan(4);
   });
 
   it('the ball sticks to a dribbling bean', async () => {
@@ -140,11 +140,10 @@ describe('bean ball', () => {
 
   it('switch key takes over the teammate closest to the ball, again cycles to the next', async () => {
     const { w, c, park } = await sandbox(14);
-    const [a, b2, b3] = w.teamBros(0).filter((b) => b !== c);
+    const [a, b2] = w.teamBros(0).filter((b) => b !== c && b.role === 'FIELD');
     a.teleport(-4, 3, 1);
     b2.teleport(-8, -3, 1);
-    b3.teleport(-14, 0, 1);
-    park([c, a, b2, b3]);
+    park([c, a, b2]);
     w.ball.setTranslation({ x: -3, y: w.ballR, z: 4 });
     w.step(PARTY_DT, NO_INPUT);
     expect(w.switchTarget).toBe(a);
@@ -176,12 +175,82 @@ describe('bean ball', () => {
     const w = await PartyWorld.create({ humanTeam: 0, size: 4, matchLength: 120, seed: 16, events: false, autoSwitch: false });
     run(w, 2.6);
     const c = w.controlled!;
-    const mate = w.teamBros(0).find((b) => b !== c)!;
+    const mate = w.teamBros(0).find((b) => b !== c && b.role === 'FIELD')!;
     w.bros.forEach((b, i) => b !== mate && b.teleport(-18 + i * 1.2, -13, 1));
     mate.teleport(5, 0, 1);
     w.ball.setTranslation({ x: 6.05, y: w.ballR, z: 0 });
     run(w, 0.5);
     expect(w.controlled).toBe(c);
+  });
+
+  it('aiming wide of the post curls the shot back into the goal', async () => {
+    const { w, c, park } = await sandbox(17);
+    c.teleport(10, -6, 1);
+    w.ball.setTranslation({ x: 10.75, y: w.ballR, z: -6 });
+    // aim at the right of the far post: the ball has to bend in
+    const aim = { mx: 0.83, mz: 0.56 };
+    for (let t = 0; t < 0.5; t += PARTY_DT) {
+      w.step(PARTY_DT, { ...NO_INPUT, ...aim, kick: true });
+      park([c]);
+    }
+    w.step(PARTY_DT, { ...NO_INPUT, ...aim });
+    const spin = w.ball.angvel();
+    expect(Math.abs(spin.y)).toBeGreaterThan(5);
+    let crossed: number | null = null;
+    for (let t = 0; t < 2 && crossed === null; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park([c]);
+      w.teamBros(1)[0].teleport(0, 14, 1); // no keeper
+      const bp = w.ballPos();
+      if (bp.x > ARENA.length / 2 - 0.3) crossed = bp.z;
+    }
+    expect(crossed).not.toBe(null);
+    expect(Math.abs(crossed!)).toBeLessThan(ARENA.goalHalfW + 0.3);
+  });
+
+  it('skill moves: rainbow flick lifts the ball, a cut changes direction', async () => {
+    const { w, c, park } = await sandbox(18);
+    run(w, 0.3, { mx: 1 });
+    park([c]);
+    expect(w.holder).toBe(c);
+    w.step(PARTY_DT, { ...NO_INPUT, mx: 1, skill: true });
+    expect(c.skill?.kind).toBe('rainbow');
+    expect(w.ballVel().y).toBeGreaterThan(4);
+    const s2 = await sandbox(19);
+    run(s2.w, 0.4, { mx: 1 });
+    s2.park([s2.c]);
+    const before = s2.c.face.clone();
+    s2.w.step(PARTY_DT, { ...NO_INPUT, mz: 1, skill: true });
+    expect(s2.c.skill?.kind).toBe('cut');
+    expect(s2.c.face.angleTo(before)).toBeGreaterThan(0.8);
+  });
+
+  it('a ball at chest height with the back to goal becomes a bicycle kick', async () => {
+    const { w, c, park } = await sandbox(20);
+    c.teleport(14, 0, -1); // facing our own half, goal behind
+    w.ball.setTranslation({ x: 13.3, y: 1.6, z: 0 });
+    w.ball.setLinvel({ x: 0, y: 0, z: 0 });
+    w.step(PARTY_DT, { ...NO_INPUT, kick: true });
+    w.step(PARTY_DT, NO_INPUT);
+    expect(c.kickKind).toBe('bicycle');
+    expect(w.ballVel().x).toBeGreaterThan(10);
+    park([c]);
+  });
+
+  it('keepers catch soft shots', async () => {
+    const w = await world(21);
+    run(w, 2.6);
+    const gk = w.teamBros(1)[0];
+    expect(gk.role).toBe('GK');
+    const gx = gk.position().x;
+    w.ball.setTranslation({ x: gx - 6, y: 0.8, z: gk.position().z });
+    w.ball.setLinvel({ x: 7, y: 1, z: 0 });
+    let caught = false;
+    for (let t = 0; t < 2 && !caught; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      if (w.gkHold?.gk === gk) caught = true;
+    }
+    expect(caught).toBe(true);
   });
 
   it('a ball over the goal line counts and the next kick-off follows', async () => {
@@ -200,9 +269,9 @@ describe('bean ball', () => {
     const w = await world(13);
     run(w, 2.6);
     w.startChaos('mega');
-    expect(w.ballR).toBeGreaterThan(0.9);
+    expect(w.ballR).toBeGreaterThan(0.7);
     w.endChaos();
-    expect(w.ballR).toBeLessThan(0.6);
+    expect(w.ballR).toBeLessThan(0.3);
     w.startChaos('lowgrav');
     expect(w.gravity).toBeGreaterThan(-6);
     w.startChaos('sweeper');

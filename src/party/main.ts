@@ -19,15 +19,15 @@ const sound = new Sound();
 
 // ---------------- input ----------------
 type Layout = 'arrows' | 'wasd';
-type Act = 'up' | 'down' | 'left' | 'right' | 'sprint' | 'jump' | 'kick' | 'pass' | 'lob' | 'tackle' | 'grab' | 'switch';
+type Act = 'up' | 'down' | 'left' | 'right' | 'sprint' | 'jump' | 'kick' | 'pass' | 'lob' | 'tackle' | 'grab' | 'switch' | 'skill';
 const LAYOUTS: Record<Layout, { name: string; keys: Record<Act, string[]> }> = {
   arrows: {
     name: 'Стрелки + ASDWEQR',
-    keys: { up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space', 'KeyW'], kick: ['KeyD'], pass: ['KeyS'], lob: ['KeyA'], tackle: ['KeyE'], grab: ['KeyR'], switch: ['KeyQ'] },
+    keys: { up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space', 'KeyW'], kick: ['KeyD'], pass: ['KeyS'], lob: ['KeyA'], tackle: ['KeyE'], grab: ['KeyR'], switch: ['KeyQ'], skill: ['KeyF'] },
   },
   wasd: {
     name: 'WASD + JKLIU',
-    keys: { up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space'], kick: ['KeyJ'], pass: ['KeyK'], lob: ['KeyL'], tackle: ['KeyI'], grab: ['KeyU'], switch: ['KeyQ', 'KeyO'] },
+    keys: { up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'], sprint: ['ShiftLeft', 'ShiftRight'], jump: ['Space'], kick: ['KeyJ'], pass: ['KeyK'], lob: ['KeyL'], tackle: ['KeyI'], grab: ['KeyU'], switch: ['KeyQ', 'KeyO'], skill: ['KeyH'] },
   },
 };
 let layout: Layout = 'arrows';
@@ -61,7 +61,7 @@ function readInput(cam: { forward(): THREE.Vector3 }): PartyInput {
     mx /= l;
     mz /= l;
   }
-  return { mx, mz, sprint: h('sprint'), jump: h('jump'), kick: h('kick'), pass: h('pass'), lob: h('lob'), tackle: h('tackle'), grab: h('grab'), switch: h('switch') };
+  return { mx, mz, sprint: h('sprint'), jump: h('jump'), kick: h('kick'), pass: h('pass'), lob: h('lob'), tackle: h('tackle'), grab: h('grab'), switch: h('switch'), skill: h('skill') };
 }
 const label = (c: string) =>
   c.startsWith('Key') ? c.slice(3) : c.startsWith('Arrow') ? ({ ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' } as Record<string, string>)[c] : c === 'Space' ? 'Пробел' : c.replace('Left', '').replace('Right', '');
@@ -108,7 +108,7 @@ class Session {
       <div class="bb-toast"></div>
       <div class="bb-tag"><div class="bb-name">ТЫ</div><div class="bb-power"><div></div></div></div>
       <div class="bb-sw">${kl('switch')}</div>
-      <div class="bb-hint">${watch ? 'Режим наблюдения · Esc пауза' : `<b>${kl('kick')}</b> удар (держи) · <b>${kl('pass')}</b> пас · <b>${kl('lob')}</b> навес · <b>${kl('tackle')}</b> подкат · <b>${kl('grab')}</b> схватить · <b>${kl('switch')}</b> смена · <b>${kl('jump')}</b> прыжок · <b>${kl('sprint')}</b> спринт · <b>V</b> камера · <b>Esc</b> пауза`}</div>`;
+      <div class="bb-hint">${watch ? 'Режим наблюдения · Esc пауза' : `<b>${kl('kick')}</b> удар (держи) · <b>${kl('pass')}</b> пас · <b>${kl('lob')}</b> навес · <b>${kl('tackle')}</b> подкат · <b>${kl('skill')}</b> финт · <b>${kl('grab')}</b> схватить · <b>${kl('switch')}</b> смена · <b>${kl('jump')}</b> прыжок · <b>${kl('sprint')}</b> спринт · <b>V</b> камера · <b>Esc</b> пауза`}</div>`;
     uiEl.appendChild(hud);
     this.hud = hud;
     this.banner = hud.querySelector('.bb-banner')!;
@@ -188,6 +188,21 @@ class Session {
         case 'grab':
           sound.whoosh();
           if (e.team === me?.team) this.showToast('ПОПАЛСЯ!');
+          break;
+        case 'skill':
+          sound.whoosh();
+          if (e.team === me?.team) this.showToast(({ rainbow: 'РАДУГА!', cut: 'ФИНТ!', turn: 'РАЗВОРОТ!' } as Record<string, string>)[e.text ?? ''] ?? 'ФИНТ!');
+          break;
+        case 'volley':
+          this.showToast('С ЛЁТА!');
+          break;
+        case 'bicycle':
+          sound.crowdReact('ooh');
+          this.showToast('ЧЕРЕЗ СЕБЯ!!');
+          break;
+        case 'save':
+          sound.crowdReact('ooh');
+          this.showToast('СЕЙВ!');
           break;
         case 'switch':
           sound.whoosh();
@@ -364,7 +379,7 @@ function showMenu() {
   const render = () => {
     el.innerHTML = `<div class="menu-card bb-card">
       <div class="bb-logo">FOOTBALL<span>BRO</span></div>
-      <div class="bb-tag-line">Желейный футбол · гигантский мяч · подкаты, захваты и полный хаос</div>
+      <div class="bb-tag-line">Угарный футбол · финты, удары через себя, подкаты, захваты и полный хаос</div>
       <button class="btn big bb-play" id="play">ИГРАТЬ</button>
       <div class="options bb-opts">
         <div class="opt"><div class="label">Команды</div>${seg('size', [[3, '3×3'], [4, '4×4'], [5, '5×5']], opts.size)}</div>
@@ -375,9 +390,10 @@ function showMenu() {
       </div>
       <div class="controls bb-controls">
         <div><b>${kl('up')} ${kl('left')} ${kl('down')} ${kl('right')}</b> бег (вперёд — от камеры), <b>${kl('sprint')}</b> спринт</div>
-        <div><b>${kl('kick')}</b> удар — держи, чтобы сильнее</div>
+        <div><b>${kl('kick')}</b> удар — держи, чтобы сильнее; стрелкой целишься в угол (мимо штанги — закрутит); мяч в воздухе — с лёта или через себя</div>
         <div><b>${kl('pass')}</b> пас своему · <b>${kl('lob')}</b> навес</div>
-        <div><b>${kl('tackle')}</b> подкат рыбкой · <b>${kl('grab')}</b> схватить соперника (держи)</div>
+        <div><b>${kl('tackle')}</b> подкат · <b>${kl('grab')}</b> схватить за майку (держи)</div>
+        <div><b>${kl('skill')}</b> финт: вперёд — радуга, вбок — финт с уходом, назад — разворот</div>
         <div><b>${kl('switch')}</b> смена игрока — на того, кто ближе к мячу (жми ещё — следующий)</div>
         <div><b>${kl('jump')}</b> прыжок (по мячу в воздухе — удар головой)</div>
         <div><b>V</b> камера · <b>Esc</b> пауза · <b>M</b> звук</div>
