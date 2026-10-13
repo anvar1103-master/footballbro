@@ -60,3 +60,6 @@
 .bb-cross::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; background: #ffd23f; border-radius: 50%; }
 .bb-lock { display: none; position: absolute; left: 50%; bottom: 52px; transform: translateX(-50%); font-family: var(--font-body); font-weight: 800;
   background: #ffd23f; color: #3a1670; padding: 6px 16px; border-radius: 999px; animation: bb-pulse 1.2s infinite; }
+
+.bb-balla { display: none; position: absolute; left: 0; top: 0; width: 38px; height: 38px; line-height: 38px; text-align: center; font-size: 22px;
+  background: #ffd23f; border: 3px solid #3a1670; border-radius: 50% 50% 50% 0; box-shadow: 0 3px 0 rgba(0,0,0,0.3); }

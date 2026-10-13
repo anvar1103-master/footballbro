@@ -52,31 +52,16 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 window.addEventListener('blur', () => keys.clear());
 
-// ---------------- mouse: look around, LMB pass, RMB shot, wheel-click lob ----------------
-let pointerLocked = false;
-let lastUnlock = 0;
-let lockFailed = false;
-let mouseX = -1;
+// ---------------- mouse: the cursor on the pitch is the aim; LMB pass, RMB shot, wheel-click lob ----------------
+let mouseX = -1, mouseY = -1;
 const mouseOn = () => layout === 'mouse' && !!session && !session.watch && !session.paused && session.w.phase !== 'over';
 gameEl.addEventListener('contextmenu', (e) => e.preventDefault());
 window.addEventListener('contextmenu', (e) => {
   if (mouseOn()) e.preventDefault();
 });
-function tryLock() {
-  if (pointerLocked || lockFailed || !gameEl.requestPointerLock) return false;
-  try {
-    const r = gameEl.requestPointerLock() as unknown as Promise<void> | undefined;
-    if (r && typeof r.catch === 'function') r.catch(() => (lockFailed = true));
-  } catch {
-    lockFailed = true;
-  }
-  return true;
-}
 window.addEventListener('mousedown', (e) => {
   if (!mouseOn()) return;
   if ((e.target as HTMLElement).closest('button')) return;
-  // the first click only grabs the mouse
-  if (!pointerLocked && !lockFailed && tryLock()) return;
   const code = 'Mouse' + e.button;
   keys.add(code);
   presses.push(code);
@@ -85,17 +70,10 @@ window.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', (e) => keys.delete('Mouse' + e.button));
 window.addEventListener('mousemove', (e) => {
   mouseX = e.clientX;
-  if (mouseOn()) session!.gfx.cam.turn(e.movementX, e.movementY);
+  mouseY = e.clientY;
 });
-document.addEventListener('pointerlockchange', () => {
-  const was = pointerLocked;
-  pointerLocked = document.pointerLockElement === gameEl;
-  if (was && !pointerLocked) lastUnlock = performance.now();
-  // Esc releases the mouse: pause the game
-  if (!pointerLocked && session && !session.paused && layout === 'mouse' && session.w.phase !== 'over') session.togglePause();
-});
-document.addEventListener('pointerlockerror', () => (lockFailed = true));
-function readInput(cam: { forward(): THREE.Vector3 }): PartyInput {
+document.addEventListener('mouseleave', () => (mouseX = mouseY = -1));
+function readInput(cam: { forward(): THREE.Vector3 }, aim: { dir: THREE.Vector3; dist: number } | null): PartyInput {
   const k = LAYOUTS[layout].keys;
   const h = (a: Act) => k[a].some((c) => keys.has(c));
   const sx = (h('right') ? 1 : 0) - (h('left') ? 1 : 0);
@@ -109,8 +87,7 @@ function readInput(cam: { forward(): THREE.Vector3 }): PartyInput {
     mx /= l;
     mz /= l;
   }
-  const aim = layout === 'mouse' ? f : null;
-  return { mx, mz, sprint: h('sprint'), jump: h('jump'), kick: h('kick'), pass: h('pass'), lob: h('lob'), tackle: h('tackle'), grab: h('grab'), switch: h('switch'), skill: h('skill'), aimX: aim?.x ?? 0, aimZ: aim?.z ?? 0 };
+  return { mx, mz, sprint: h('sprint'), jump: h('jump'), kick: h('kick'), pass: h('pass'), lob: h('lob'), tackle: h('tackle'), grab: h('grab'), switch: h('switch'), skill: h('skill'), aimX: aim?.dir.x ?? 0, aimZ: aim?.dir.z ?? 0, aimDist: aim?.dist ?? 0 };
 }
 const label = (c: string) =>
   c === 'Mouse0' ? 'ЛКМ' : c === 'Mouse2' ? 'ПКМ' : c === 'Mouse1' ? 'Колесо' : c.startsWith('Key') ? c.slice(3) : c.startsWith('Arrow') ? ({ ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' } as Record<string, string>)[c] : c === 'Space' ? 'Пробел' : c.replace('Left', '').replace('Right', '');
@@ -131,8 +108,8 @@ class Session {
   chaos: HTMLDivElement;
   tag: HTMLDivElement;
   sw: HTMLDivElement;
-  cross: HTMLDivElement;
-  lockHint: HTMLDivElement;
+  balla: HTMLDivElement;
+
   count: HTMLDivElement;
   bannerT = 0;
   toastT = 0;
@@ -143,7 +120,7 @@ class Session {
   constructor(public w: PartyWorld, public watch: boolean) {
     const q = (new URLSearchParams(location.search).get('q') as Quality | null) ?? settings.quality;
     this.gfx = new PartyRenderer(gameEl, w, q);
-    this.gfx.cam.mouseLook = layout === 'mouse' && !watch;
+    if (layout === 'mouse') gameEl.style.cursor = 'crosshair';
     const [a, b] = w.teams;
     const hud = document.createElement('div');
     hud.className = 'bb-hud';
@@ -160,8 +137,8 @@ class Session {
       <div class="bb-toast"></div>
       <div class="bb-tag"><div class="bb-name">ТЫ</div><div class="bb-power"><div></div></div></div>
       <div class="bb-sw">${kl('switch')}</div>
-      <div class="bb-cross"></div>
-      <div class="bb-lock">Кликни мышью по полю — камера и прицел на мышке</div>
+      <div class="bb-balla">⚽</div>
+
       <div class="bb-hint">${watch ? 'Режим наблюдения · Esc пауза' : `<b>${kl('kick')}</b> удар (держи) · <b>${kl('pass')}</b> пас · <b>${kl('lob')}</b> навес · <b>${kl('tackle')}</b> подкат · <b>${kl('skill')}</b> финт · <b>${kl('grab')}</b> схватить · <b>${kl('switch')}</b> смена · <b>${kl('jump')}</b> прыжок · <b>${kl('sprint')}</b> спринт · <b>V</b> камера · <b>Esc</b> пауза`}</div>`;
     uiEl.appendChild(hud);
     this.hud = hud;
@@ -173,8 +150,8 @@ class Session {
     this.tag = hud.querySelector('.bb-tag')!;
     this.count = hud.querySelector('.bb-count')!;
     this.sw = hud.querySelector('.bb-sw')!;
-    this.cross = hud.querySelector('.bb-cross')!;
-    this.lockHint = hud.querySelector('.bb-lock')!;
+    this.balla = hud.querySelector('.bb-balla')!;
+
     this.showCount('3');
     this.loop = this.loop.bind(this);
     this.raf = requestAnimationFrame(this.loop);
@@ -304,26 +281,32 @@ class Session {
     const dt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
     for (const k of presses.splice(0)) {
-      if ((k === 'Escape' && performance.now() - lastUnlock > 400) || k === 'KeyP') this.togglePause();
+      if (k === 'Escape' || k === 'KeyP') this.togglePause();
       if (k === 'KeyM') sound.setMuted(!sound.muted);
       if (k === 'KeyR' && (this.paused || this.w.phase === 'over')) start(this.watch);
       if (k === 'KeyV' && this.w.controlled) {
-        this.gfx.cam.mode = (this.gfx.cam.mode + 1) % (this.gfx.cam.mouseLook ? 2 : 3);
-        this.showToast(['Камера: за спиной', 'Камера: повыше', 'Камера: трансляция'][this.gfx.cam.mode]);
+        this.gfx.cam.mode = (this.gfx.cam.mode + 1) % 3;
+        this.showToast(['Камера: сверху-сзади', 'Камера: трансляция', 'Камера: близко'][this.gfx.cam.mode]);
       }
     }
     if (this.paused) return;
     const w = this.w;
-    const ml = this.gfx.cam.mouseLook;
-    this.cross.style.display = ml && this.gfx.cam.mode < 2 ? 'block' : 'none';
-    this.lockHint.style.display = ml && !pointerLocked && !lockFailed ? 'block' : 'none';
-    // no pointer lock (e.g. inside a frame): turn when the cursor sits at the screen edge
-    if (ml && !pointerLocked && mouseX >= 0) {
-      const wv = window.innerWidth;
-      if (mouseX < wv * 0.07) this.gfx.cam.turn(-dt * 700, 0);
-      else if (mouseX > wv * 0.93) this.gfx.cam.turn(dt * 700, 0);
+    // mouse aim = the point on the grass under the cursor
+    let aim: { dir: THREE.Vector3; dist: number } | null = null;
+    this.gfx.aimPoint = null;
+    if (mouseOn() && mouseX >= 0 && w.controlled) {
+      const pt = this.gfx.pickGround(mouseX, mouseY);
+      if (pt) {
+        const cp = w.controlled.position();
+        const d = new THREE.Vector3(pt.x - cp.x, 0, pt.z - cp.z);
+        const dist = d.length();
+        if (dist > 0.6) {
+          aim = { dir: d.normalize(), dist };
+          this.gfx.aimPoint = pt;
+        }
+      }
     }
-    const inp = this.watch ? NO_INPUT : readInput(this.gfx.cam);
+    const inp = this.watch ? NO_INPUT : readInput(this.gfx.cam, aim);
     // a short slow-motion right after a goal
     const slow = w.slowmo > 0 ? 0.35 : 1;
     this.acc += dt * this.speed * slow;
@@ -350,7 +333,7 @@ class Session {
     if (c && !this.watch) {
       const s = this.gfx.project(c.position().add(new THREE.Vector3(0, 1.45, 0)));
       // with the mouse camera the crown already marks you: show the tag only for the power bar / state
-      const quiet = this.gfx.cam.mouseLook && !c.charging && c.state === 'up' && !c.grabbing && !w.grabbedBy(c);
+      const quiet = false;
       this.tag.style.display = s.visible && !quiet ? 'flex' : 'none';
       this.tag.style.transform = `translate(${Math.round(s.x)}px, ${Math.round(s.y)}px) translate(-50%, -100%)`;
       (this.tag.querySelector('.bb-name') as HTMLElement).textContent = c.state === 'up' ? (c.grabbing ? 'ДЕРЖУ!' : w.grabbedBy(c) ? 'ПУСТИ!' : 'ТЫ') : 'ОЙ…';
@@ -358,6 +341,24 @@ class Session {
       pw.style.visibility = c.charging ? 'visible' : 'hidden';
       (pw.firstElementChild as HTMLElement).style.width = `${Math.round(Math.min(1, c.kickCharge / 0.8) * 100)}%`;
     } else this.tag.style.display = 'none';
+    // ball off screen: an arrow on the edge pointing at it
+    {
+      const bp = w.ballPos();
+      const v = bp.clone().project(this.gfx.cam.camera);
+      const behind = v.z > 1;
+      let x = v.x, y = v.y;
+      if (behind) {
+        x = -x;
+        y = -y;
+      }
+      const off = behind || Math.abs(x) > 0.95 || Math.abs(y) > 0.95;
+      this.balla.style.display = off && w.phase === 'play' ? 'block' : 'none';
+      if (off) {
+        const m = Math.max(Math.abs(x), Math.abs(y)) / 0.9;
+        const ex = ((x / m + 1) / 2) * window.innerWidth, ey = ((1 - y / m) / 2) * window.innerHeight;
+        this.balla.style.transform = `translate(${Math.round(ex)}px, ${Math.round(ey)}px) translate(-50%, -50%) rotate(${Math.atan2(-y, x)}rad)`;
+      }
+    }
     // who the switch key would take over
     const st = w.switchTarget;
     if (st && !this.watch && w.phase !== 'over') {
@@ -367,7 +368,6 @@ class Session {
     } else this.sw.style.display = 'none';
     if (w.phase === 'over' && !this.overShown && w.phaseT > 1.5) {
       this.overShown = true;
-      if (pointerLocked) document.exitPointerLock?.();
       const [a, b] = w.teams;
       const me = w.controlled;
       const won = me ? w.teams[me.team].score > w.teams[1 - me.team].score : null;
@@ -390,7 +390,6 @@ class Session {
   togglePause() {
     if (this.w.phase === 'over') return;
     this.paused = !this.paused;
-    if (this.paused && pointerLocked) document.exitPointerLock?.();
     if (this.paused) {
       const o = document.createElement('div');
       o.className = 'overlay';
@@ -398,10 +397,7 @@ class Session {
         <div class="row" style="margin-top:12px"><button class="btn" data-a="again">Заново (R)</button><button class="btn" data-a="menu">В меню</button></div></div>`;
       o.addEventListener('click', (e) => {
         const act = (e.target as HTMLElement).dataset.a;
-        if (act === 'resume') {
-          this.togglePause();
-          if (layout === 'mouse') tryLock();
-        }
+        if (act === 'resume') this.togglePause();
         if (act === 'again') start(this.watch);
         if (act === 'menu') toMenu();
       });
@@ -463,10 +459,10 @@ function showMenu() {
       <div class="controls bb-controls">
         ${
           layout === 'mouse'
-            ? `<div><b>Мышь</b> — камера и прицел (кружок в центре экрана)</div>
-        <div><b>WASD</b> бег, <b>${kl('sprint')}</b> спринт</div>
-        <div><b>ПКМ</b> удар в прицел — держи, чтобы сильнее; целься мимо штанги — закрутит; мяч в воздухе — с лёта или через себя</div>
-        <div><b>ЛКМ</b> пас в прицел (своему или на ход) · <b>${kl('lob')}</b> навес</div>`
+            ? `<div><b>Курсор мыши</b> на поле — прицел, <b>WASD</b> бег, <b>${kl('sprint')}</b> спринт</div>
+        <div><b>ЛКМ</b> пас туда, где курсор (своему или на ход); без мяча — смена игрока</div>
+        <div><b>ПКМ</b> удар в курсор — держи, чтобы сильнее; мимо штанги — закрутит; без мяча рядом с соперником — подкат</div>
+        <div><b>${kl('lob')}</b> навес / парашют в курсор</div>`
             : `<div><b>${kl('up')} ${kl('left')} ${kl('down')} ${kl('right')}</b> бег (вперёд — от камеры), <b>${kl('sprint')}</b> спринт</div>
         <div><b>${kl('kick')}</b> удар — держи, чтобы сильнее; стрелкой целишься в угол (мимо штанги — закрутит); мяч в воздухе — с лёта или через себя</div>
         <div><b>${kl('pass')}</b> пас своему · <b>${kl('lob')}</b> навес</div>`
@@ -497,7 +493,6 @@ function showMenu() {
       render();
     }
     if (t.id === 'play' || t.id === 'watch') {
-      if (t.id === 'play' && layout === 'mouse') tryLock(); // needs the click's user gesture
       el.remove();
       start(t.id === 'watch');
     }

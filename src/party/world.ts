@@ -61,6 +61,8 @@ export interface PartyInput {
   /** mouse aim direction in WORLD space (0,0 = no mouse aim: use the stick / facing) */
   aimX: number;
   aimZ: number;
+  /** distance to the cursor point on the pitch (0 = only a direction) */
+  aimDist?: number;
 }
 export const NO_INPUT: PartyInput = { mx: 0, mz: 0, sprint: false, jump: false, kick: false, pass: false, lob: false, tackle: false, grab: false, switch: false, skill: false, aimX: 0, aimZ: 0 };
 /** indoor hall: walls go up to the roof, so the ball never leaves */
@@ -144,7 +146,7 @@ export class PartyWorld {
   /** render-time slow motion request (seconds left) */
   slowmo = 0;
   /** human buffered actions: fire as soon as the ball is in reach */
-  buffer: { kind: 'kick' | 'pass' | 'lob'; power: number; t: number; aim: Vector3; mouse: boolean } | null = null;
+  buffer: { kind: 'kick' | 'pass' | 'lob'; power: number; t: number; aim: Vector3; mouse: boolean; dist: number } | null = null;
   /** a keeper holding the ball */
   gkHold: { gk: Bro; t: number } | null = null;
   private prevInput: PartyInput = { ...NO_INPUT };
@@ -200,11 +202,12 @@ export class PartyWorld {
       W.cylinder('post', r, f.goalH / 2, x0, f.goalH / 2, -f.goalHalfW - r);
       W.cylinder('post', r, f.goalH / 2, x0, f.goalH / 2, f.goalHalfW + r);
       W.cylinder('post', r, f.goalHalfW + r, x0, f.goalH + r, 0, true);
-      const dd = f.goalDepthBottom + 0.3;
-      W.box('net', 0.1, f.goalH / 2 + 0.3, f.goalHalfW + 0.3, x0 + dir * (dd + 0.1), f.goalH / 2, 0);
-      W.box('net', dd / 2, f.goalH / 2 + 0.2, 0.1, x0 + dir * (dd / 2), f.goalH / 2, -(f.goalHalfW + 0.35));
-      W.box('net', dd / 2, f.goalH / 2 + 0.2, 0.1, x0 + dir * (dd / 2), f.goalH / 2, f.goalHalfW + 0.35);
-      W.box('net', dd / 2, 0.1, f.goalHalfW + 0.3, x0 + dir * (dd / 2), f.goalH + 0.35, 0);
+      // thick boxes right behind the cloth so nothing tunnels through or pokes out of the net
+      const dd = f.goalDepthBottom + 0.05;
+      W.box('net', 0.4, f.goalH / 2 + 0.3, f.goalHalfW + 0.6, x0 + dir * (dd + 0.4), f.goalH / 2, 0);
+      W.box('net', dd / 2, f.goalH / 2 + 0.2, 0.4, x0 + dir * (dd / 2), f.goalH / 2, -(f.goalHalfW + 0.15 + 0.4));
+      W.box('net', dd / 2, f.goalH / 2 + 0.2, 0.4, x0 + dir * (dd / 2), f.goalH / 2, f.goalHalfW + 0.15 + 0.4);
+      W.box('net', dd / 2, 0.4, f.goalHalfW + 0.6, x0 + dir * (dd / 2), f.goalH + 0.15 + 0.4, 0);
     }
     this.ball = W.ball(BALL_P.radius, BALL_P.mass, 0.0, 0.05);
     this.ball.setTranslation({ x: 0, y: 9, z: 0 });
@@ -374,6 +377,7 @@ export class PartyWorld {
     this.pendingHits.length = 0;
     this.world.step(dt);
     this.afterHits();
+    this.keepInside();
     this.keeperCatch(dt);
     this.bodyCollisions();
     this.ballEvents();
@@ -618,6 +622,76 @@ export class PartyWorld {
     }
   }
 
+  /**
+   * Safety net against tunnelling: anything that ended up beyond a wall (or through the net) is put
+   * back inside with its velocity reflected. The goal box behind each goal mouth is allowed.
+   */
+  private keepInside() {
+    const L = ARENA.length / 2, Wd = ARENA.width / 2, c = ARENA.corner;
+    const fix = (p: Vector3, v: Vector3, r: number, bounce: number) => {
+      let moved = false;
+      const inMouth = Math.abs(p.z) < ARENA.goalHalfW + 0.1 && p.y < ARENA.goalH + 0.1;
+      if (Math.abs(p.x) > L - r && inMouth) {
+        // inside the goal: stay in front of the net
+        const back = L + ARENA.goalDepthBottom - r;
+        if (Math.abs(p.x) > back) {
+          p.x = Math.sign(p.x) * back;
+          if (Math.sign(v.x) === Math.sign(p.x)) v.x *= -bounce;
+          moved = true;
+        }
+        const side = ARENA.goalHalfW + 0.1 - r;
+        if (Math.abs(p.z) > side && Math.abs(p.x) > L) {
+          p.z = Math.sign(p.z) * side;
+          if (Math.sign(v.z) === Math.sign(p.z)) v.z *= -bounce;
+          moved = true;
+        }
+        return moved;
+      }
+      if (Math.abs(p.x) > L - r) {
+        p.x = Math.sign(p.x) * (L - r);
+        if (Math.sign(v.x) === Math.sign(p.x)) v.x *= -bounce;
+        moved = true;
+      }
+      if (Math.abs(p.z) > Wd - r) {
+        p.z = Math.sign(p.z) * (Wd - r);
+        if (Math.sign(v.z) === Math.sign(p.z)) v.z *= -bounce;
+        moved = true;
+      }
+      // chamfered corners: |x| + |z| <= L + Wd - c (minus the radius along the diagonal)
+      const over = Math.abs(p.x) + Math.abs(p.z) - (L + Wd - c - r * Math.SQRT2);
+      if (over > 0) {
+        p.x -= Math.sign(p.x) * over / 2;
+        p.z -= Math.sign(p.z) * over / 2;
+        const vn = (Math.sign(p.x) * v.x + Math.sign(p.z) * v.z) / Math.SQRT2;
+        if (vn > 0) {
+          v.x -= Math.sign(p.x) * vn * Math.SQRT1_2 * (1 + bounce);
+          v.z -= Math.sign(p.z) * vn * Math.SQRT1_2 * (1 + bounce);
+        }
+        moved = true;
+      }
+      if (p.y < r * 0.5) {
+        p.y = r;
+        moved = true;
+      }
+      return moved;
+    };
+    if (!this.gkHold) {
+      const p = this.ballPos(), v = this.ballVel();
+      if (fix(p, v, this.ballR, 0.6)) {
+        this.ball.setTranslation({ x: p.x, y: p.y, z: p.z });
+        this.ball.setLinvel({ x: v.x, y: v.y, z: v.z });
+      }
+    }
+    for (const b of this.bros) {
+      const p = b.position(), v = b.velocity();
+      const y0 = p.y;
+      if (fix(p, v, BRO.radius * 0.9, 0.2)) {
+        b.body.setTranslation({ x: p.x, y: Math.max(y0, p.y), z: p.z });
+        b.body.setLinvel({ x: v.x, y: v.y, z: v.z });
+      }
+    }
+  }
+
   // ---------------- beans vs beans ----------------
   private bodyCollisions() {
     const bs = this.bros;
@@ -771,7 +845,7 @@ export class PartyWorld {
     const gx = this.goalX(b.team);
     let dir = aim.clone().setY(0).normalize();
     if (dir.lengthSq() < 0.5) dir = b.face.clone();
-    const speed = 15 + power * 17;
+    const speed = 20 + power * 14;
     let curl = 0;
     let dist = 20;
     const lim = ARENA.goalHalfW - 0.4;
@@ -797,11 +871,11 @@ export class PartyWorld {
       }
     }
     // clumsiness grows with power
-    dir.applyAxisAngle(new Vector3(0, 1, 0), this.rng.gauss() * (0.012 + 0.03 * power * power));
+    dir.applyAxisAngle(new Vector3(0, 1, 0), this.rng.gauss() * (0.008 + 0.02 * power * power));
     // height: crosses the line between knee and bar height, higher when blasted
     const t = Math.max(0.15, dist / speed);
     const g = -this.gravity;
-    const wantH = 0.35 + power * 1.25 + this.rng.gauss() * 0.25 * power * power;
+    const wantH = 0.35 + power * 1.0 + this.rng.gauss() * 0.2 * power * power;
     const vy = Math.max(0.5, (wantH - bp.y + 0.5 * g * t * t) / t);
     const v = dir.multiplyScalar(speed).setY(vy);
     const h = Math.hypot(v.x, v.z);
@@ -843,16 +917,32 @@ export class PartyWorld {
     const q = mate.position();
     const mv = mate.velocity();
     let d = Math.hypot(q.x - bp.x, q.z - bp.z);
-    const arrive = 5;
+    const arrive = 8;
     let v = Math.sqrt(arrive * arrive + 2 * BALL_P.rollC * d);
     const lead = d / Math.max(6, v);
     const tx = q.x + mv.x * lead * 0.8, tz = q.z + mv.z * lead * 0.8;
     d = Math.hypot(tx - bp.x, tz - bp.z);
-    v = Math.min(26, Math.sqrt(arrive * arrive + 2 * BALL_P.rollC * d) * (1 + BALL_P.dragK * d * 0.5));
+    v = Math.min(30, Math.sqrt(arrive * arrive + 2 * BALL_P.rollC * d) * (1 + BALL_P.dragK * d * 0.5));
     const dir = new Vector3(tx - bp.x, 0, tz - bp.z).normalize();
     dir.applyAxisAngle(new Vector3(0, 1, 0), this.rng.gauss() * 0.02);
     const airborne = bp.y > this.ballR + 0.3;
     return this.strike(b, dir.multiplyScalar(v).setY(airborne ? 1 : 0.3), 'pass', undefined, !airborne);
+  }
+
+  /** the team-mate of `b` closest to point `pt` (within `max` m) */
+  mateNear(b: Bro, pt: Vector3, max: number) {
+    let best: Bro | null = null;
+    let bd = max;
+    for (const q of this.teamBros(b.team)) {
+      if (q === b || q.state === 'down') continue;
+      const p = q.position();
+      const d = Math.hypot(p.x - pt.x, p.z - pt.z);
+      if (d < bd) {
+        bd = d;
+        best = q;
+      }
+    }
+    return best;
   }
 
   /** cos of the angle between `dir` and the line from `b` to `m` */
@@ -865,7 +955,7 @@ export class PartyWorld {
   /** ground pass into space along `dir` (a through ball for whoever gets there) */
   passInto(b: Bro, dir: Vector3, dist = 13) {
     const d = dir.clone().setY(0).normalize();
-    const v = Math.min(22, Math.sqrt(16 + 2 * BALL_P.rollC * dist) * (1 + BALL_P.dragK * dist * 0.5));
+    const v = Math.min(28, Math.sqrt(36 + 2 * BALL_P.rollC * dist) * (1 + BALL_P.dragK * dist * 0.5));
     return this.strike(b, d.multiplyScalar(v).setY(0.3), 'pass', undefined, true);
   }
 
@@ -1074,13 +1164,46 @@ export class PartyWorld {
     this.emit({ type: 'switch', pos: b.position(), team: b.team });
   }
 
-  /** a teammate got the ball (e.g. your pass arrived): take him over */
+  /** is the human's player involved with the ball (has it, can play it, or it is rolling to him)? */
+  private onBall(b: Bro) {
+    if (this.holder === b || this.inReach(b)) return true;
+    const bp = this.ballPos(), p = b.position();
+    return Math.hypot(bp.x - p.x, bp.z - p.z) < 3.2 && !(this.holder && this.holder.team !== b.team);
+  }
+
+  /**
+   * Auto switch: a teammate gets the ball (your pass arrived), or the ball is clearly closer to
+   * another field player of yours — take him over (like FIFA's auto-switching).
+   */
   private autoSwitch() {
     const c = this.controlled;
+    if (!c || this.opts.autoSwitch === false || this.switchCd > 0 || c.charging || this.buffer) return;
     const h = this.holder;
-    if (!c || this.opts.autoSwitch === false || !h || h === c || h.team !== c.team || this.switchCd > 0 || h.role === 'GK') return;
-    this.switchTo(h);
-    this.switchCycle = [];
+    if (h && h !== c && h.team === c.team && h.role !== 'GK') {
+      this.switchTo(h);
+      this.switchCycle = [];
+      return;
+    }
+    if (h === c || this.onBall(c)) return;
+    const bp = this.ballPos();
+    const cp = c.position();
+    const dc = Math.hypot(bp.x - cp.x, bp.z - cp.z);
+    let best: Bro | null = null;
+    let bd = dc - 4; // must be clearly closer
+    for (const b of this.teamBros(c.team)) {
+      if (b === c || b.role === 'GK' || b.state !== 'up') continue;
+      const p = b.position();
+      const d = Math.hypot(bp.x - p.x, bp.z - p.z);
+      if (d < bd && d < 9) {
+        bd = d;
+        best = b;
+      }
+    }
+    if (best) {
+      this.switchTo(best);
+      this.switchCd = 1.4;
+      this.switchCycle = [];
+    }
   }
 
   // ---------------- the human bean ----------------
@@ -1109,30 +1232,66 @@ export class PartyWorld {
     if (input.grab && !prev.grab) this.tryGrab(b);
     if (!input.grab && b.grabbing) this.release(b);
     if (input.skill && !prev.skill) this.doSkill(b, stick);
+    const aimDist = mouse ? input.aimDist ?? 0 : 0;
+    // without the ball the same buttons defend: pass = switch player, shot = slide tackle at the carrier
+    const near = this.onBall(b);
+    const opp = this.holder && this.holder.team !== b.team ? this.holder : null;
+    if (!near && input.pass && !prev.pass && !this.buffer) {
+      const target = this.pickSwitch();
+      if (target) {
+        this.switchTo(target);
+        this.switchCycle = [b, target];
+      }
+      return;
+    }
+    if (!near && opp && input.kick && !prev.kick) {
+      const op = opp.position(), p = b.position();
+      if (Math.hypot(op.x - p.x, op.z - p.z) < 4.5) {
+        b.face.set(op.x - p.x, 0, op.z - p.z).normalize();
+        b.intent.dive = true;
+        return;
+      }
+    }
     // kick: hold to charge, release to strike
     if (input.kick && (b.canAct || b.state === 'up')) {
       b.charging = 'kick';
       b.kickCharge = Math.min(0.8, b.kickCharge + dt);
     } else if (!input.kick && prev.kick && b.charging === 'kick') {
-      this.buffer = { kind: 'kick', power: Math.min(1, b.kickCharge / 0.8), t: 0, aim, mouse };
+      this.buffer = { kind: 'kick', power: Math.min(1, b.kickCharge / 0.8), t: 0, aim, mouse, dist: aimDist };
       b.charging = null;
       b.kickCharge = 0;
     } else if (!input.kick) b.charging = null;
-    if (input.pass && !prev.pass) this.buffer = { kind: 'pass', power: 0, t: 0, aim, mouse };
-    if (input.lob && !prev.lob) this.buffer = { kind: 'lob', power: 0, t: 0, aim, mouse };
+    if (input.pass && !prev.pass) this.buffer = { kind: 'pass', power: 0, t: 0, aim, mouse, dist: aimDist };
+    if (input.lob && !prev.lob) this.buffer = { kind: 'lob', power: 0, t: 0, aim, mouse, dist: aimDist };
     // buffered action fires as soon as the ball is in reach (forgiving timing)
     const buf = this.buffer;
     if (buf) {
       buf.t += dt;
-      if (mouse || stick.lengthSq() > 0.09) buf.aim.copy(aim);
+      if (mouse || stick.lengthSq() > 0.09) {
+        buf.aim.copy(aim);
+        buf.dist = aimDist;
+      }
       if (this.inReach(b)) {
         this.buffer = null;
         if (buf.kind === 'kick') this.smartKick(b, buf.power, buf.aim);
         else if (buf.kind === 'pass') {
-          const m = this.bestMate(b, false, buf.aim);
-          // with the mouse the pass goes where you point: to a mate in that direction, else into space
-          if (m && (!buf.mouse || this.coneTo(b, m, buf.aim) > 0.8)) this.passTo(b, m);
-          else this.passInto(b, buf.aim);
+          if (buf.mouse && buf.dist > 1) {
+            // to the mate nearest the cursor, else into the space you pointed at
+            const p = b.position();
+            const pt = p.clone().addScaledVector(buf.aim, buf.dist);
+            const m = this.mateNear(b, pt, 6);
+            if (m) this.passTo(b, m);
+            else this.passInto(b, buf.aim, Math.max(4, buf.dist));
+          } else {
+            const m = this.bestMate(b, false, buf.aim);
+            if (m && (!buf.mouse || this.coneTo(b, m, buf.aim) > 0.8)) this.passTo(b, m);
+            else this.passInto(b, buf.aim);
+          }
+        } else if (buf.mouse && buf.dist > 3) {
+          const p = b.position();
+          const pt = p.clone().addScaledVector(buf.aim, buf.dist);
+          const toGoal = Math.abs(this.goalX(b.team) - pt.x) < 3 && Math.abs(pt.z) < ARENA.goalHalfW + 2;
+          this.lob(b, toGoal ? this.lobTarget(b, buf.aim) : pt.setY(0));
         } else this.lob(b, this.lobTarget(b, buf.aim));
         // turn towards where the ball went
         if (buf.mouse) b.face.copy(buf.aim);

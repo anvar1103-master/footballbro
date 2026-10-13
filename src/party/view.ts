@@ -8,86 +8,73 @@ import { Particles } from '../render/effects';
 import { GoalNet } from '../render/net';
 import type { Quality } from '../settings';
 import { Arena } from './arena';
-import { DudeActor, makeCrown } from './dude';
+import { DudeActor } from './dude';
 import { ballTexture } from '../render/ball';
 import { ARENA, PartyEvent, PartyWorld } from './world';
 
-/** Third-person chase camera behind the human's player, looking down-field (or a TV view). */
+/**
+ * Game camera. Mode 0 (default) "play": high behind your team's attacking direction, never spins,
+ * frames your player AND the ball (zooms out when they are apart) — controls stay screen-relative
+ * and nothing gets lost. Mode 1: side TV view. Mode 2: close chase behind the player.
+ */
 export class ChaseCamera {
   camera: THREE.PerspectiveCamera;
-  /** 0 = close behind, 1 = high behind, 2 = TV side view */
   mode = 0;
-  yaw = 0;
-  /** mouse-look: the mouse turns the camera; the crosshair (screen centre) is where you pass/shoot */
-  mouseLook = false;
-  pitch = 0.28;
+  /** ground direction of "up" on the screen (camera-relative controls use it) */
+  private fwd = new THREE.Vector3(1, 0, 0);
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
+  private yaw = 0;
   constructor(aspect: number) {
-    this.camera = new THREE.PerspectiveCamera(55, aspect, 0.3, 2000);
+    this.camera = new THREE.PerspectiveCamera(50, aspect, 0.3, 2000);
   }
-  /** forward direction on the ground (camera-relative controls use it) */
   forward() {
-    return new THREE.Vector3(Math.cos(this.yaw), 0, Math.sin(this.yaw));
-  }
-  /** mouse movement (pixels) */
-  turn(dx: number, dy: number) {
-    this.yaw += dx * 0.0032;
-    this.pitch = THREE.MathUtils.clamp(this.pitch + dy * 0.0022, 0.02, 0.9);
+    return this.fwd.clone();
   }
   follow(target: THREE.Vector3, ball: THREE.Vector3, attackDir: number, dt: number, snap = false) {
-    if (this.mouseLook && this.mode < 2) {
-      if (snap) this.yaw = attackDir > 0 ? 0 : Math.PI;
-      const f = this.forward();
-      const dist = this.mode === 0 ? 6.4 : 10.5;
-      const wantPos = target.clone().addScaledVector(f, -dist * Math.cos(this.pitch)).setY(1.6 + dist * Math.sin(this.pitch));
-      const wantLook = target.clone().addScaledVector(f, 7).setY(1.1);
-      this.camera.fov = 58;
-      this.camera.updateProjectionMatrix();
-      this.pos.lerp(wantPos, snap ? 1 : 1 - Math.exp(-dt * 14));
-      this.look.lerp(wantLook, snap ? 1 : 1 - Math.exp(-dt * 16));
-      this.camera.position.copy(this.pos);
-      this.camera.lookAt(this.look);
-      return;
-    }
-    // base: look towards the goal we attack; lean a bit towards the ball
-    const base = attackDir > 0 ? 0 : Math.PI;
-    const toBall = Math.atan2(ball.z - target.z, ball.x - target.x);
-    let d = toBall - base;
-    while (d > Math.PI) d -= Math.PI * 2;
-    while (d < -Math.PI) d += Math.PI * 2;
-    const far = Math.hypot(ball.x - target.x, ball.z - target.z);
-    const bias = far > 2.5 ? THREE.MathUtils.clamp(d, -1.3, 1.3) * 0.6 : 0;
-    const want = base + bias;
-    let dy = want - this.yaw;
-    while (dy > Math.PI) dy -= Math.PI * 2;
-    while (dy < -Math.PI) dy += Math.PI * 2;
-    this.yaw += snap ? dy : dy * (1 - Math.exp(-dt * 1.8));
-    const f = this.forward();
+    const dir = attackDir >= 0 ? 1 : -1;
     let wantPos: THREE.Vector3, wantLook: THREE.Vector3;
-    if (this.mode === 2) {
-      wantPos = new THREE.Vector3(target.x * 0.7, 26, ARENA.width / 2 + 24);
-      wantLook = new THREE.Vector3(target.x * 0.8, 0, target.z * 0.5);
-      this.camera.fov = 40;
-    } else {
-      // ball behind or far to the side: back off and rise so both stay in shot
-      const rel = new THREE.Vector3(ball.x - target.x, 0, ball.z - target.z);
-      const along = rel.dot(f);
-      const side = Math.abs(rel.x * -f.z + rel.z * f.x);
-      const extra = Math.min(9, Math.max(0, -along) * 0.8 + Math.max(0, side - 6) * 0.35);
-      const back = (this.mode === 0 ? 6.2 : 11) + extra;
-      const up = (this.mode === 0 ? 3.3 : 7.5) + extra * 0.6;
-      const lift = Math.min(3, Math.max(0, ball.y - 3) * 0.4);
-      wantPos = target.clone().addScaledVector(f, -back).setY(up + lift);
-      // look between the player and the ball
-      const toward = rel.clampLength(0, 9).multiplyScalar(0.4);
-      wantLook = target.clone().addScaledVector(f, 3.5).add(toward).setY(1 + lift * 0.5);
+    const spread = Math.min(26, Math.hypot(ball.x - target.x, ball.z - target.z));
+    // what we keep in shot: mostly the player, pulled towards the ball
+    const focus = target.clone().lerp(ball.clone().setY(0), spread > 1 ? 0.45 : 0);
+    focus.y = 0;
+    if (this.mode === 1) {
+      // side TV view: attack to the right
+      const side = dir; // camera on the +z side when attacking +x, so +x is screen right
+      // inside the hall, just under the roof by the glass
+      wantPos = new THREE.Vector3(focus.x * 0.85, 8.4, side * (ARENA.width / 2 - 0.6));
+      wantLook = new THREE.Vector3(focus.x, 0, focus.z * 0.5 - side * 3);
+      this.camera.fov = 62;
+      this.fwd.set(0, 0, -side); // screen up = away from the camera
+    } else if (this.mode === 2) {
+      // close chase behind the player, turning gently towards the ball
+      const base = dir > 0 ? 0 : Math.PI;
+      let d = Math.atan2(ball.z - target.z, ball.x - target.x) - base;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      const want = base + (spread > 2.5 ? THREE.MathUtils.clamp(d, -1.2, 1.2) * 0.5 : 0);
+      let dy = want - this.yaw;
+      while (dy > Math.PI) dy -= Math.PI * 2;
+      while (dy < -Math.PI) dy += Math.PI * 2;
+      this.yaw += snap ? dy : dy * (1 - Math.exp(-dt * 1.8));
+      this.fwd.set(Math.cos(this.yaw), 0, Math.sin(this.yaw));
+      wantPos = target.clone().addScaledVector(this.fwd, -7).setY(4.2);
+      wantLook = target.clone().addScaledVector(this.fwd, 4).add(new THREE.Vector3(ball.x - target.x, 0, ball.z - target.z).clampLength(0, 8).multiplyScalar(0.35)).setY(1);
       this.camera.fov = 55;
+    } else {
+      // high behind, fixed direction
+      this.fwd.set(dir, 0, 0);
+      // stays under the roof (9 m): zoom out by going further back instead of higher
+      const back = 10 + spread * 0.5;
+      const up = Math.min(8.4, 7 + spread * 0.12);
+      wantPos = focus.clone().addScaledVector(this.fwd, -back).setY(up);
+      wantPos.z = focus.z * 0.75; // a little less sideways swing than the play
+      wantLook = focus.clone().addScaledVector(this.fwd, 3.5).setY(0.6);
+      this.camera.fov = 52;
     }
     this.camera.updateProjectionMatrix();
-    const k = snap ? 1 : 1 - Math.exp(-dt * 5);
-    this.pos.lerp(wantPos, k);
-    this.look.lerp(wantLook, snap ? 1 : 1 - Math.exp(-dt * 7));
+    this.pos.lerp(wantPos, snap ? 1 : 1 - Math.exp(-dt * 4));
+    this.look.lerp(wantLook, snap ? 1 : 1 - Math.exp(-dt * 6));
     this.camera.position.copy(this.pos);
     this.camera.lookAt(this.look);
   }
@@ -107,8 +94,14 @@ export class PartyRenderer {
   marker: THREE.Mesh;
   /** ground chevrons showing the mouse aim */
   aimArrow: THREE.Group;
+  /** where the mouse points on the pitch (set by main.ts), null = no mouse aim */
+  aimPoint: THREE.Vector3 | null = null;
+  cursor: THREE.Mesh;
+  private ray = new THREE.Raycaster();
+  /** FIFA-style indicator: a yellow arrow over the head of the player you control */
   crown: THREE.Group;
   private crownPos = new THREE.Vector3();
+  private blobs: THREE.Mesh[] = [];
   sun: THREE.DirectionalLight;
   time = 0;
   private first = true;
@@ -128,13 +121,13 @@ export class PartyRenderer {
     this.cam = new ChaseCamera(container.clientWidth / container.clientHeight);
 
     // indoor hall: dark shell, light from the roof panels
-    this.scene.background = new THREE.Color('#22262e');
+    this.scene.background = new THREE.Color('#2c323d');
     const pm = new THREE.PMREMGenerator(r);
     this.scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
     this.scene.environmentIntensity = 0.45;
     pm.dispose();
-    this.scene.add(new THREE.HemisphereLight(0xf4f1ea, 0x3d6b33, 0.9));
-    const sun = new THREE.DirectionalLight(0xfff6e8, 2.3);
+    this.scene.add(new THREE.HemisphereLight(0xf7f4ee, 0x456f3a, 1.1));
+    const sun = new THREE.DirectionalLight(0xfff6e8, 2.5);
     sun.position.set(-6, 40, 10);
     sun.castShadow = true;
     Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 26, bottom: -26, near: 5, far: 120 });
@@ -149,7 +142,7 @@ export class PartyRenderer {
       const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
       const c = new EffectComposer(r, rt);
       c.addPass(new RenderPass(this.scene, this.cam.camera));
-      if (quality === 'high') c.addPass(new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.25, 0.6, 0.9));
+      c.addPass(new UnrealBloomPass(new THREE.Vector2(size.x, size.y), quality === 'high' ? 0.35 : 0.25, 0.5, 0.85));
       c.addPass(new OutputPass());
       this.composer = c;
     }
@@ -176,6 +169,13 @@ export class PartyRenderer {
     this.scene.add(this.ballShadow);
     this.scene.add(this.particles.mesh);
 
+    const blobTex = (this.ballShadow.material as THREE.MeshBasicMaterial).map;
+    for (let i = 0; i < w.bros.length; i++) {
+      const blob = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, opacity: 0.55 }));
+      blob.rotation.x = -Math.PI / 2;
+      this.blobs.push(blob);
+      this.scene.add(blob);
+    }
     for (const b of w.bros) {
       const a = new DudeActor(b, w.teams[b.team].info, w.teams[1 - b.team].info);
       this.actors.push(a);
@@ -201,8 +201,17 @@ export class PartyRenderer {
     }
     this.aimArrow.visible = false;
     this.scene.add(this.aimArrow);
-    this.crown = makeCrown();
-    this.crown.scale.setScalar(1.3);
+    this.cursor = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.5, 4, 1), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }));
+    this.cursor.rotation.x = -Math.PI / 2;
+    this.cursor.visible = false;
+    this.scene.add(this.cursor);
+    this.crown = new THREE.Group();
+    const arrowGeo = new THREE.ConeGeometry(0.17, 0.32, 3);
+    arrowGeo.rotateX(Math.PI);
+    const arrow = new THREE.Mesh(arrowGeo, new THREE.MeshBasicMaterial({ color: 0xffd23f }));
+    const arrowOut = new THREE.Mesh(arrowGeo, new THREE.MeshBasicMaterial({ color: 0x1b1030, side: THREE.BackSide }));
+    arrowOut.scale.setScalar(1.25);
+    this.crown.add(arrow, arrowOut);
     this.scene.add(this.crown);
     window.addEventListener('resize', () => this.resize());
   }
@@ -232,6 +241,14 @@ export class PartyRenderer {
     this.time += dt;
     const w = this.w;
     const bp = w.ballPos();
+    this.actors.forEach((a, i) => {
+      const p = a.bro.body.translation();
+      const blob = this.blobs[i];
+      const hgt = Math.max(0, p.y - 0.76);
+      blob.position.set(p.x, 0.025, p.z);
+      blob.scale.setScalar(1.1 + hgt * 0.3);
+      (blob.material as THREE.MeshBasicMaterial).opacity = Math.max(0.15, 0.55 - hgt * 0.2);
+    });
     for (const a of this.actors) {
       const g = a.bro.grabbing;
       a.update(dt, this.time, bp, g ? g.position() : null);
@@ -253,11 +270,18 @@ export class PartyRenderer {
     this.arena.update(dt, this.time, w.sweeper);
     const c = w.controlled;
     this.marker.visible = !!c;
-    this.aimArrow.visible = !!c && this.cam.mouseLook && this.cam.mode < 2 && c.state === 'up';
+    // mouse aim: chevrons from your player towards the cursor, and a target ring on the grass
+    const ap = this.aimPoint;
+    this.aimArrow.visible = !!c && !!ap && c.state === 'up';
+    this.cursor.visible = !!ap;
+    if (ap) {
+      this.cursor.position.set(ap.x, 0.04, ap.z);
+      this.cursor.rotation.z += dt * 2;
+    }
     if (this.aimArrow.visible) {
       const cp = c!.position();
       this.aimArrow.position.set(cp.x, 0, cp.z);
-      this.aimArrow.rotation.y = -this.cam.yaw;
+      this.aimArrow.rotation.y = -Math.atan2(ap!.z - cp.z, ap!.x - cp.x);
     }
     const focus = c ? c.position() : bp.clone();
     this.crown.visible = !!c;
@@ -265,18 +289,30 @@ export class PartyRenderer {
       this.marker.position.set(focus.x, 0.04, focus.z);
       this.marker.scale.setScalar(1 + Math.sin(this.time * 5) * 0.06);
       // the crown flies over to the player you switched to
-      const want = focus.clone().add(new THREE.Vector3(0, 1.12 + Math.sin(this.time * 3) * 0.05, 0));
+      const want = focus.clone().add(new THREE.Vector3(0, 1.45 + Math.sin(this.time * 5) * 0.06, 0));
       if (this.crownPos.lengthSq() === 0) this.crownPos.copy(want);
       this.crownPos.lerp(want, 1 - Math.exp(-dt * 12));
       this.crown.position.copy(this.crownPos);
       this.crown.rotation.y += dt * 1.5;
     }
     const attack = c ? w.teams[c.team].dir : 1;
-    if (!c && this.cam.mode < 2) this.cam.mode = 2;
+    if (!c && this.cam.mode === 0) this.cam.mode = 1; // watch mode: TV view
     this.cam.follow(focus, bp, attack, dt, this.first);
     this.first = false;
     if (this.composer) this.composer.render();
     else this.renderer.render(this.scene, this.cam.camera);
+  }
+
+  /** the point on the grass under screen position (client px), or null */
+  pickGround(cx: number, cy: number) {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const nx = ((cx - r.left) / r.width) * 2 - 1, ny = -((cy - r.top) / r.height) * 2 + 1;
+    if (Math.abs(nx) > 1 || Math.abs(ny) > 1) return null;
+    this.ray.setFromCamera(new THREE.Vector2(nx, ny), this.cam.camera);
+    const o = this.ray.ray.origin, d = this.ray.ray.direction;
+    if (d.y > -0.01) return null;
+    const t = -o.y / d.y;
+    return new THREE.Vector3(o.x + d.x * t, 0, o.z + d.z * t);
   }
 
   project(p: THREE.Vector3) {
