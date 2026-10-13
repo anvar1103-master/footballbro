@@ -168,7 +168,8 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
       if (airborne && distGoal < 20 && w.rng.next() < 0.6) {
         // volley / overhead kick
         w.smartKick(b, 0.8, new Vector3(gx - bp.x, 0, corner - bp.z));
-      } else if (distGoal < 18 && facingGoal > 0.3 && w.rng.next() < 0.5) {
+      } else if (distGoal < (w.teams[b.team].fire >= 1 ? 27 : 18) && facingGoal > 0.3 && w.rng.next() < 0.5) {
+        // (with a full ОГОНЬ meter they let fly from much further out)
         w.shoot(b, Math.min(1, 0.35 + distGoal / 28 + w.rng.next() * 0.2), corner);
       } else if (blocked && w.holder === b && w.rng.next() < 0.3 * sk.aggro) {
         // try to beat him with a skill move
@@ -285,7 +286,7 @@ function keeper(w: PartyWorld, b: Bro, m: Mind) {
 }
 
 /** if a team-mate's pass is rolling past, the point where `b` should meet it */
-function receivePoint(w: PartyWorld, b: Bro) {
+export function receivePoint(w: PartyWorld, b: Bro) {
   if (w.holder || w.lastTouch?.team !== b.team || w.lastTouch === b) return null;
   const bp = w.ballPos();
   const bv = w.ballVel();

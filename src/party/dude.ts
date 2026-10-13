@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { TeamInfo } from '../sim/team';
 import { Bro, BRO } from './bro';
 
@@ -15,6 +16,7 @@ import { Bro, BRO } from './bro';
 const DUMMY = ['#f2c12e', '#f2c12e', '#f2c12e', '#f4b324', '#efefe8', '#ff9b30', '#a9bcd0'];
 const BOOTS = ['#151515', '#ffffff', '#ff3d00', '#1e88e5', '#ffd23f', '#3ee07a', '#ff4fa3'];
 const GK_KITS = ['#2ec4b6', '#ffd60a', '#222222', '#c77dff', '#ff8c42'];
+const BOOT_STRIPE = ['#ffffff', '#ffd23f', '#ff3d00', '#3bc8ff', '#111111'];
 
 const OUTLINE = new THREE.MeshBasicMaterial({ color: 0x17112a, side: THREE.BackSide });
 const EYE_W = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2 });
@@ -59,19 +61,39 @@ function targetMaterial() {
   return new THREE.MeshStandardMaterial({ map: targetTex, roughness: 0.5, polygonOffset: true, polygonOffsetFactor: -2 });
 }
 
+/** several primitives baked into one geometry (fewer draw calls for small details) */
+function merged(parts: [THREE.BufferGeometry, THREE.Matrix4][]) {
+  const gs = parts.map(([g, m]) => {
+    const c = (g.index ? g.toNonIndexed() : g.clone()).applyMatrix4(m);
+    for (const k of Object.keys(c.attributes)) if (!['position', 'normal', 'uv'].includes(k)) c.deleteAttribute(k);
+    return c;
+  });
+  return mergeGeometries(gs)!;
+}
+const M = (x: number, y: number, z: number, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) =>
+  new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
+
 function ball(r: number, m: THREE.Material, w = 14, h = 10) {
   const me = new THREE.Mesh(new THREE.SphereGeometry(r, w, h), m);
   me.castShadow = true;
   return me;
 }
 
-function shirtTexture(primary: string, trim: string, num: number, gk: boolean) {
+function shirtTexture(primary: string, trim: string, num: number, gk: boolean, name: string) {
   const c = document.createElement('canvas');
   c.width = 512;
   c.height = 256;
   const g = c.getContext('2d')!;
   g.fillStyle = primary;
   g.fillRect(0, 0, 512, 256);
+  // fabric: soft vertical folds and a fine mesh
+  for (let x = 0; x < 512; x += 2) {
+    const k = Math.sin(x * 0.09) * 0.5 + Math.sin(x * 0.031 + 1) * 0.5;
+    g.fillStyle = k > 0 ? `rgba(255,255,255,${k * 0.05})` : `rgba(0,0,0,${-k * 0.07})`;
+    g.fillRect(x, 0, 2, 256);
+  }
+  g.fillStyle = 'rgba(0,0,0,0.05)';
+  for (let y = 0; y < 256; y += 4) for (let x = (y / 4) % 2 ? 0 : 2; x < 512; x += 4) g.fillRect(x, y, 1, 1);
   // x: around the body (0/512 = front, 256 = back); y: top → bottom
   g.fillStyle = trim;
   g.fillRect(0, 0, 512, 16); // collar band
@@ -84,19 +106,42 @@ function shirtTexture(primary: string, trim: string, num: number, gk: boolean) {
     for (let y = 24; y < 256; y += 28) g.fillRect(0, y, 512, 12);
     g.globalAlpha = 1;
   }
-  // crest on the chest
+  // V-neck at the front (u = 0 / 512 wraps)
+  for (const x0 of [0, 512]) {
+    g.beginPath();
+    g.moveTo(x0 - 34, 0);
+    g.lineTo(x0, 40);
+    g.lineTo(x0 + 34, 0);
+    g.closePath();
+    g.fill();
+  }
+  // crest on the chest, small number on the other side
   g.beginPath();
   g.arc(448, 70, 16, 0, Math.PI * 2);
   g.fill();
-  // number on the back
-  g.font = 'bold 120px "Lilita One", "Arial Black", sans-serif';
+  g.fillStyle = primary;
+  g.beginPath();
+  g.arc(448, 70, 9, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = trim;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
+  g.font = 'bold 34px "Lilita One", "Arial Black", sans-serif';
+  g.fillText(String(num), 64, 72);
+  // name and number on the back
+  g.font = 'bold 26px "Russo One", "Arial Black", sans-serif';
+  g.fillText(name.toUpperCase(), 256, 44, 150);
+  g.font = 'bold 120px "Lilita One", "Arial Black", sans-serif';
   g.lineWidth = 10;
   g.strokeStyle = 'rgba(0,0,0,0.35)';
-  g.strokeText(String(num), 256, 128);
-  g.fillStyle = trim;
-  g.fillText(String(num), 256, 128);
+  g.strokeText(String(num), 256, 138);
+  g.fillText(String(num), 256, 138);
+  // sponsor
+  g.font = 'bold 22px "Russo One", "Arial Black", sans-serif';
+  g.globalAlpha = 0.9;
+  g.fillText('КРАШ', 0, 132, 90);
+  g.fillText('КРАШ', 512, 132, 90);
+  g.globalAlpha = 1;
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
@@ -167,7 +212,9 @@ export class DudeActor {
     const skinM = new THREE.MeshPhysicalMaterial({ color: plastic, roughness: 0.38, clearcoat: 0.7, clearcoatRoughness: 0.3 });
     const jointM = new THREE.MeshStandardMaterial({ color: '#2b2f38', roughness: 0.45, metalness: 0.5 });
     const shirtM = mat(primary, 0.75);
-    shirtM.map = shirtTexture(primary, trim, bro.number, gk);
+    shirtM.map = shirtTexture(primary, trim, bro.number, gk, bro.name);
+    const trimM = mat(trim, 0.7);
+    const boltM = new THREE.MeshStandardMaterial({ color: '#c9ced6', roughness: 0.3, metalness: 0.8 });
     shirtM.color.set('#ffffff');
     const sleeveM = mat(primary, 0.75);
     const shortsM = mat(shortsCol, 0.75);
@@ -211,6 +258,11 @@ export class DudeActor {
     tOut.scale.setScalar(1.045);
     torso.add(tOut);
     this.spine.add(torso);
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.068, 0.014, 6, 24), trimM);
+    collar.rotation.x = Math.PI / 2;
+    collar.scale.set(1.15, 0.85, 1);
+    collar.position.set(0, 0.445, -0.005);
+    this.spine.add(collar);
     // segmented dummy neck
     for (let i = 0; i < 2; i++) {
       const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.05 - i * 0.004, 0.055 - i * 0.004, 0.035, 14), i ? skinM : jointM);
@@ -246,6 +298,16 @@ export class DudeActor {
     seam.scale.set(1, 1.12, 0.98);
     seam.position.y = 0.15;
     this.head.add(seam);
+    // a separate chin like the real dummies, with the seam around it
+    const jaw = new THREE.Mesh(new THREE.SphereGeometry(0.085, 18, 12), skinM);
+    jaw.scale.set(0.95, 0.62, 0.92);
+    jaw.position.set(0, 0.065, 0.032);
+    jaw.castShadow = true;
+    const jawSeam = new THREE.Mesh(new THREE.TorusGeometry(0.083, 0.0035, 4, 28, Math.PI), jointM);
+    jawSeam.scale.set(0.97, 1, 0.92);
+    jawSeam.rotation.set(Math.PI / 2 + 0.25, 0, 0);
+    jawSeam.position.set(0, 0.08, 0.035);
+    this.head.add(jaw, jawSeam);
     const face = new THREE.Group();
     face.position.y = 0.15;
     this.head.add(face);
@@ -286,9 +348,27 @@ export class DudeActor {
       sleeve.castShadow = true;
       const upper = new THREE.Mesh(lathe([[0.056, -0.02], [0.052, -0.12], [0.045, -0.23], [0.0, -0.235]]), gk ? sleeveM : skinM);
       upper.castShadow = true;
+      const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.063, 0.011, 6, 18), trimM);
+      cuff.rotation.x = Math.PI / 2;
+      cuff.position.y = gk ? -0.235 : -0.105;
+      sh.add(cuff);
       const el = new THREE.Group();
       el.position.y = -0.26;
-      const elbowJ = ball(0.05, jointM, 12, 8);
+      const elbowJ = new THREE.Mesh(
+        merged([
+          [new THREE.SphereGeometry(0.05, 12, 8), M(0, 0, 0)],
+          [new THREE.CylinderGeometry(0.016, 0.016, 0.11, 6), M(0, 0, 0, 0, 0, Math.PI / 2)],
+        ]),
+        jointM,
+      );
+      const bolts = new THREE.Mesh(
+        merged([
+          [new THREE.CylinderGeometry(0.014, 0.014, 0.006, 6), M(0.056, 0, 0, 0, 0, Math.PI / 2)],
+          [new THREE.CylinderGeometry(0.014, 0.014, 0.006, 6), M(-0.056, 0, 0, 0, 0, Math.PI / 2)],
+        ]),
+        boltM,
+      );
+      el.add(bolts);
       const fore = new THREE.Mesh(lathe([[0.046, 0], [0.044, -0.08], [0.036, -0.19], [0.0, -0.195]]), gk ? sleeveM : skinM);
       fore.castShadow = true;
       const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.025, 10), jointM);
@@ -315,26 +395,74 @@ export class DudeActor {
       hip.position.set(s * 0.095, -0.04, 0);
       const short = new THREE.Mesh(lathe([[0.09, 0.02], [0.092, -0.06], [0.088, -0.15], [0.0, -0.155]]), shortsM);
       short.castShadow = true;
+      // side stripe on the shorts, hem
+      const stripeCol = gk ? '#ffffff' : socksCol === shortsCol ? primary : socksCol;
+      const stripe = new THREE.Mesh(
+        merged([
+          [new THREE.BoxGeometry(0.012, 0.16, 0.03), M(s * 0.088, -0.065, 0)],
+          [new THREE.TorusGeometry(0.088, 0.007, 4, 18), M(0, -0.148, 0, Math.PI / 2)],
+        ]),
+        mat(stripeCol, 0.7),
+      );
       const thigh = new THREE.Mesh(lathe([[0.078, -0.05], [0.074, -0.18], [0.06, -0.37], [0.0, -0.375]]), skinM);
       thigh.castShadow = true;
       const kn = new THREE.Group();
       kn.position.y = -0.41;
-      const kneeJ = ball(0.062, jointM, 12, 8);
+      const kneeJ = new THREE.Mesh(
+        merged([
+          [new THREE.SphereGeometry(0.062, 12, 8), M(0, 0, 0)],
+          [new THREE.CylinderGeometry(0.02, 0.02, 0.14, 6), M(0, 0, 0, 0, 0, Math.PI / 2)],
+        ]),
+        jointM,
+      );
+      const kneeBolts = new THREE.Mesh(
+        merged([
+          [new THREE.CylinderGeometry(0.017, 0.017, 0.006, 6), M(0.071, 0, 0, 0, 0, Math.PI / 2)],
+          [new THREE.CylinderGeometry(0.017, 0.017, 0.006, 6), M(-0.071, 0, 0, 0, 0, Math.PI / 2)],
+        ]),
+        boltM,
+      );
       const kneeT = new THREE.Mesh(new THREE.CircleGeometry(0.032, 20), target);
       kneeT.position.set(0, 0.0, 0.063);
-      const shin = new THREE.Mesh(lathe([[0.06, -0.03], [0.062, -0.12], [0.048, -0.32], [0.045, -0.37], [0.0, -0.375]]), socksM);
+      // sock with a shin guard bulge, band at the top
+      const shin = new THREE.Mesh(
+        merged([
+          [lathe([[0.06, -0.03], [0.062, -0.12], [0.048, -0.32], [0.045, -0.37], [0.0, -0.375]]), M(0, 0, 0)],
+          [new THREE.SphereGeometry(0.05, 12, 10), M(0, -0.17, 0.028, 0, 0, 0, 0.95, 2.3, 0.55)],
+        ]),
+        socksM,
+      );
       shin.castShadow = true;
-      const boot = new THREE.Mesh(new THREE.SphereGeometry(0.075, 16, 10), bootM);
-      boot.scale.set(0.85, 0.6, 1.65);
-      boot.position.set(0, -0.415, 0.045);
+      const band = new THREE.Mesh(
+        merged([
+          [new THREE.CylinderGeometry(0.0645, 0.0635, 0.022, 16, 1, true), M(0, -0.06, 0)],
+          [new THREE.CylinderGeometry(0.061, 0.06, 0.012, 16, 1, true), M(0, -0.09, 0)],
+        ]),
+        trimM,
+      );
+      // boot: rounded body with a toe cap, a shaped sole with studs, a contrasting side stripe
+      const boot = new THREE.Mesh(
+        merged([
+          [new THREE.SphereGeometry(0.075, 16, 10), M(0, -0.412, 0.04, 0, 0, 0, 0.82, 0.62, 1.55)],
+          [new THREE.SphereGeometry(0.052, 12, 8), M(0, -0.418, 0.125, 0, 0, 0, 1.08, 0.78, 0.95)],
+          [new THREE.CylinderGeometry(0.052, 0.056, 0.07, 12), M(0, -0.385, -0.03)],
+        ]),
+        bootM,
+      );
       boot.castShadow = true;
-      const sole = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.02, 0.24), studM);
-      sole.position.set(0, -0.455, 0.045);
-      const laces = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.01, 0.08), studM);
-      laces.position.set(0, -0.375, 0.07);
-      laces.rotation.x = -0.35;
-      kn.add(kneeJ, kneeT, shin, boot, sole, laces);
-      hip.add(short, thigh, kn);
+      const studParts: [THREE.BufferGeometry, THREE.Matrix4][] = [[new THREE.CylinderGeometry(0.055, 0.055, 0.016, 16), M(0, -0.452, 0.045, 0, 0, 0, 1, 1, 2.05)]];
+      for (const [x, z] of [[-0.03, -0.04], [0.03, -0.04], [-0.032, 0.07], [0.032, 0.07], [-0.024, 0.13], [0.024, 0.13]]) studParts.push([new THREE.CylinderGeometry(0.009, 0.006, 0.016, 6), M(x, -0.466, z + 0.02)]);
+      const sole = new THREE.Mesh(merged(studParts), studM);
+      const bootStripe = new THREE.Mesh(
+        merged([
+          [new THREE.BoxGeometry(0.006, 0.016, 0.11), M(0.061, -0.405, 0.04, 0.35, 0, 0)],
+          [new THREE.BoxGeometry(0.006, 0.016, 0.11), M(-0.061, -0.405, 0.04, 0.35, 0, 0)],
+          [new THREE.BoxGeometry(0.045, 0.008, 0.075), M(0, -0.372, 0.085, -0.38, 0, 0)],
+        ]),
+        mat(BOOT_STRIPE[Math.floor(rnd(5) * BOOT_STRIPE.length)], 0.4),
+      );
+      kn.add(kneeJ, kneeBolts, kneeT, shin, band, boot, sole, bootStripe);
+      hip.add(short, stripe, thigh, kn);
       this.pelvis.add(hip);
       return [hip, kn];
     };
@@ -351,6 +479,51 @@ export class DudeActor {
       this.stars.add(st);
     }
     this.stars.visible = false;
+  }
+
+  /** the whole visible pose (body transform, joints, face) for instant replays: POSE_N numbers */
+  capture(out: number[]) {
+    const r = this.root;
+    out.push(r.position.x, r.position.y, r.position.z, r.quaternion.x, r.quaternion.y, r.quaternion.z, r.quaternion.w);
+    out.push(this.flip.rotation.x, this.rig.scale.x, this.rig.scale.y, this.rig.scale.z);
+    out.push(this.pelvis.rotation.x, this.pelvis.rotation.y, this.pelvis.rotation.z, this.pelvis.position.y);
+    out.push(this.spine.rotation.x, this.spine.rotation.y, this.spine.rotation.z, this.head.rotation.x, this.head.rotation.y);
+    for (let i = 0; i < 2; i++) out.push(this.arm[i].rotation.x, this.arm[i].rotation.z, this.elbow[i].rotation.x, this.leg[i].rotation.x, this.leg[i].rotation.z, this.knee[i].rotation.x);
+    out.push(this.ooh.visible ? 1 : 0, this.eyes[0].scale.y, this.stars.visible ? 1 : 0);
+  }
+
+  /** show a recorded pose: frame `a` blended towards frame `b` by `k` (both at offset `o`) */
+  applyPose(a: Float32Array, b: Float32Array, o: number, k: number, time: number) {
+    const L = (i: number) => a[o + i] + (b[o + i] - a[o + i]) * k;
+    this.root.position.set(L(0), L(1), L(2));
+    _q.set(a[o + 3], a[o + 4], a[o + 5], a[o + 6]);
+    const qb = new THREE.Quaternion(b[o + 3], b[o + 4], b[o + 5], b[o + 6]);
+    this.root.quaternion.copy(_q).slerp(qb, k);
+    this.flip.rotation.x = L(7);
+    this.rig.scale.set(L(8), L(9), L(10));
+    this.pelvis.rotation.set(L(11), L(12), L(13));
+    this.pelvis.position.y = L(14);
+    this.spine.rotation.set(L(15), L(16), L(17));
+    this.head.rotation.x = L(18);
+    this.head.rotation.y = L(19);
+    for (let i = 0; i < 2; i++) {
+      const j = 20 + i * 6;
+      this.arm[i].rotation.x = L(j);
+      this.arm[i].rotation.z = L(j + 1);
+      this.elbow[i].rotation.x = L(j + 2);
+      this.leg[i].rotation.x = L(j + 3);
+      this.leg[i].rotation.z = L(j + 4);
+      this.knee[i].rotation.x = L(j + 5);
+    }
+    const ooh = a[o + 32] > 0.5;
+    this.ooh.visible = ooh;
+    this.smile.visible = !ooh;
+    for (const e of this.eyes) e.scale.y = L(33);
+    this.stars.visible = a[o + 34] > 0.5;
+    if (this.stars.visible) {
+      this.stars.position.set(L(0), L(1) + 1.1, L(2));
+      this.stars.rotation.y = time * 6;
+    }
   }
 
   update(dt: number, time: number, ballPos: THREE.Vector3, grabTarget: THREE.Vector3 | null) {
@@ -629,6 +802,8 @@ export class DudeActor {
   }
 }
 
+/** numbers per actor in a replay frame (see DudeActor.capture) */
+export const POSE_N = 35;
 /** the crown floats over whichever player you control */
 export function makeCrown() {
   const g = new THREE.Group();

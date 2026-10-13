@@ -1,78 +1,81 @@
 # Footballbro — project map for Claude
 
 ## TWO GAMES IN THIS REPO — read first
-- **Footballbro = the CURRENT game: funny third-person arcade football with crash-test-dummy footballers.** `index.html` → `src/party/`.
-  Procedural dummies (yellow plastic, ball joints, target stickers, faces, kits — no assets) on wobbly physics bodies,
-  you control one player (crown, Q switches) in a 3/4/5-a-side team incl. keeper vs AI, normal-size ball at the feet,
-  skill moves, aimed + curled shots, volleys, bicycle kicks, headers, slide tackles, shirt grabs, chaos events,
-  indoor football hall (grass, boards, glass walls up to a roof — no outs, no fouls, no offside), ball dropped from
-  the roof at kick-offs, golden goal. Default controls: WASD + the mouse cursor on the pitch as the aim (LMB pass,
-  RMB shot; without the ball LMB = switch, RMB = slide tackle). Camera does NOT follow the mouse any more.
+- **Footballbro = the CURRENT game: funny arcade football with crash-test-dummy footballers.** `index.html` → `src/party/`.
+  Procedural dummies (yellow plastic, ball joints, bolts, target stickers, faces, detailed kits — no assets) on wobbly
+  physics bodies, you control one player in a 3/4/5-a-side team incl. keeper vs AI, normal-size ball at the feet, skill
+  moves, aimed + curled shots, volleys, bicycle kicks, headers, slide tackles, shirt grabs, chaos events, ОГОНЬ fire
+  shots, instant goal replays, a 6-step tutorial. Indoor football hall (grass, LED boards/ribbons, LED screens above the
+  goals, glass walls up to a 12 m roof — no outs, no fouls, no offside), ball dropped at kick-offs, golden goal.
+  Default view: TV broadcast camera on the long side following the BALL (your attack goes right).
   Playable link: https://claude.ai/artifact/BCqgxNdt5aL2t2m8hSNK5v · GitHub Pages: https://anvar1103-master.github.io/footballbro/
 - History / user decisions: (1) realistic sim with real rules + Mixamo athletes → REJECTED ("FIFA clone, unplayable");
   (2) Fall Guys jelly beans with a giant ball → liked the fun, but "still a Fall Guys clone": wants normal little people
   with arms/legs that move funnily, more ball control, skill moves and beautiful goals. Keep it silly + good-looking.
-  (3) then: play with the mouse (camera + aim, LMB pass, RMB shot), crash-test-dummy look, indoor hall without
-  stands/fans (don't spend effort on crowds), keep the sweeper ("вертушка") event. Mobile port = later, not now.
-  (4) mouse-look camera was too hard ("ball and camera get lost") → fixed high-behind camera + cursor aim, FIFA-style
-  arrow marker instead of the crown, auto-switch to the closest player, stronger shots/passes, no clipping.
+  (3) then: play with the mouse (aim, LMB pass, RMB shot), crash-test-dummy look, indoor hall without stands/fans (don't
+  spend effort on crowds), keep the sweeper ("вертушка") event. Mobile port = later, not now.
+  (4) mouse-look camera was too hard ("ball and camera get lost") → fixed camera + cursor aim, FIFA-style marker, auto-switch.
+  (5) "still loses the ball, a newbie won't understand anything, be creative, keep it football, better graphics and more
+  detailed models" → TV camera following the ball + x-ray ball / landing ring / trail, two main buttons with on-screen
+  context prompts + pass-target ring, keyboard auto-aim, receive assist, tutorial, ОГОНЬ meter + fire shot, goal replays,
+  detailed dummies, LED screens/boards, colour grading.
 - **Soccerbro = the OLD FIFA-style game**, kept only as a library of ready code (ball physics, cloth net — the user likes
   the goal net —, ball texture, sounds, particles). `classic.html` → `src/main.ts`, `src/sim/`, `src/render/`, `src/ui/`.
   Old link: https://claude.ai/artifact/1pQLJehMiRup8dydP6x37b. Don't develop it further unless asked.
-- Keyboard only (no gamepads), vs AI only, no local co-op for now.
+- Mouse + keyboard (no gamepads), vs AI only, no local co-op for now.
 
 ### Footballbro map (src/party/)
 ```
 phys.ts   — thin layer over cannon-es (pure JS! WASM is blocked by the artifact CSP). Boxes (with yaw), capsules, ball
-            (setSphereRadius for the mega-ball event), setGravity, groundBelow ray. Bouncy inflatable walls.
+            (setSphereRadius for the mega-ball event), setGravity, groundBelow ray, ballGhost (fire shots pass through bros).
 bro.ts    — Bro = player body: capsule (r .36, 1.52 m) kept upright by under-damped PD torque (= wobble), run impulse above
             COM (leans), states up/down/getup/dive, jump, stamina; speedMul/accelMul (events, grabs), grabbing, celebrate,
             kickKind/kickSide (animation), skill {rainbow|cut|turn}, fooled (wrong-footed), catchCd (GK), landT (bicycle).
-world.ts  — PartyWorld: ARENA 50×32 (also a FieldDims for GoalNet), walls (HALL_H 9 m) + roof + chamfered corners,
-            goals 6×2.4 m, ball r .17. PartyInput.aimX/aimZ/aimDist = mouse cursor point on the grass (direction +
-            distance from the controlled player): LMB pass → mateNear(cursor) or passInto that point, RMB shot along it.
+world.ts  — PartyWorld: ARENA 50×32 (also a FieldDims for GoalNet), walls up to HALL_H 12 m + roof + chamfered corners,
+            goals 6×2.4 m, ball r .17, DROP_H 6 (kick-off hover/drop). PartyInput.aimX/aimZ/aimDist = mouse cursor point.
+            Teams have fire (ОГОНЬ meter 0..1) and combo. addFire(): completed passes (gotBall → 'combo' event, one-touch
+            passes count in strike()), skills, tackles, saves, +0.25 to the conceding team, slow passive fill; AI fills
+            slower on easy. Full meter → shootAt makes a fire shot (fast, low, 'fire' event, slowmo) → fireBall: ghost ball,
+            updateFire() knocks down everyone it passes ('burn'); keeperCatch vs fire: blown into the net or heroic block
+            (chance by difficulty, human keeper saves more on easy). endFire() on goal / kick-off / placeBall.
+            Human: passChoice() = the receiver (cursor mate / cone mate) → passTarget (HUD ring); assistAim() = keyboard
+            shots go at a corner (away from the keeper when aimed at the middle, curlers when wide); headAt() for high balls;
+            receive assist (no stick input + a team-mate's pass coming = run to meet it, brain.receivePoint).
             Context buttons when not onBall(): pass = switch player, kick near the opponent carrier = slide tackle.
-            autoSwitch: teammate gets the ball OR is >4 m closer to it (switchCd 1.4 s). keepInside() clamps ball and
-            players back into the hall / goal box after every physics step (anti-tunnelling); net boxes are thick
-            and sit right behind the cloth.
-            Phases countdown(2.4 s, ball hovers) → play → goal(3.6 s, slow-mo, losers flop) → over; golden goal.
-            Actions: shootAt(aim) — aim assist into the frame, aiming wide of a post adds Magnus curl back in, power =
-            pace + height; smartKick picks volley (ball in the air) / bicycle (ball at chest height, back to goal) / shot;
-            passTo (ground, leads the run, AI receivers come to meet it), lob (chip over the keeper near goal, else to a
-            mate), doSkill (stick vs facing: fwd = rainbow flick, side = step-over cut, back = drag-back; fools defenders),
-            tackle = dive (slide), tryGrab/release, headers on contact while airborne (aimed by the stick).
-            human() buffers kick/pass/lob ~0.6 s until the ball is in reach. dribbleAssist: ball at the feet with a
-            stride rhythm, knocked further when sprinting. Keepers: keeperCatch (catch / parry by difficulty, hold, throw).
-            Chaos: mega (big beach-ball) / lowgrav / ice / turbo / sweeper (rotating bar).
+            dribbleAssist: ball at the feet, never captures a ball moving >15 m/s relative (shots deflect off bodies).
+            autoSwitch, keepInside() clamps, keeperCatch, chaos (mega/lowgrav/ice/turbo/sweeper), golden goal.
+            Tutorial hooks: scripted Map<Bro, fn> (called instead of the AI), skipCountdown(), placeBall().
             Input is WORLD-space (main.ts maps keys camera-relative).
-brain.ts  — AI: chaser (gets behind the ball, dribbles, shoots at the corner away from the keeper, volleys, skill moves
-            when blocked, passes, lobs from wide, tackles/grabs the carrier), keeper() (line, rush, dive at predicted
-            shot point), receivers meet passes (receivePoint), supporters spread ahead. Uses w.rng (deterministic tests).
-dude.ts   — DudeActor: procedural crash-test-dummy footballer (lathe-shaped torso/limbs, ball joints, target stickers). Hierarchy root(capsule) → flip (slide tackles) → rig (feet y=0) →
-            pelvis → spine → head/arms; pelvis → legs (hip → knee → boot). Kit texture with number (linear UVs), outline
-            hulls, face (eyes follow the ball, brows, mouth), plastic colours DUMMY[]. Pose targets per state (run stride, kicks per
-            foot/kind, bicycle flip, slide, GK dive, skills, grab, fooled, windmill when off balance, celebrations) are
-            smoothed into joint rotations. Conventions: face +z, left = +x; limb rot.x + = backwards, spine rot.x + = lean fwd.
-            makeCrown() floats over the controlled player.
-arena.ts  — indoor hall: grass (pitch texture + blade-detail shader), padded ad boards, glass walls with mullions up
-            to the roof, steel trusses + emissive light panels (pulse on goals), white goals, hazard-striped sweeper bar.
-view.ts   — PartyRenderer + ChaseCamera: mode 0 high-behind (fixed attack direction, frames player + ball, stays
-            under the 9 m roof), 1 side TV inside the hall, 2 close chase; V cycles. forward() = screen-up for controls.
-            pickGround(cursor) for mouse aim, ground cursor + chevrons, yellow arrow indicator over the controlled
-            player (field `crown`), blob contact shadows under players, bloom on medium/high. Reuses GoalNet (render/net.ts) and Particles.
-main.ts   — menu (teams 3/4/5, length, difficulty, layout), HUD (bean.css), sounds, countdown, events, pause, end.
-            Mouse layout (default): no pointer lock; cursor raycast to the grass each frame = aim; mouse buttons are fed
-            into the key set as 'Mouse0/1/2'. HUD arrow on the screen edge when the ball is off screen.
-            Mouse keys: WASD run, Space jump, Shift sprint, LMB pass, RMB shot (hold), wheel/C lob, E tackle, F skill, R grab, Q switch.
-            Keys (arrows layout): arrows run, Shift sprint, Space/W jump, D kick (hold; arrows aim), S pass, A lob/chip,
-            E tackle, F skill, R grab, Q switch. WASD layout: J kick, K pass, L lob, I tackle, H skill, U grab, Q/O switch.
-Switching: Q → pickSwitch() (teammate on the ball, else closest to it); presses within ~1.8 s cycle to the next-best.
-autoSwitch (menu, default on): control jumps to a teammate who gets the ball (your pass arriving). The crown floats
-over the controlled bean (view.ts), HUD bubble marks w.switchTarget. Human input is handled ONCE per step before AI.
+brain.ts  — AI: chaser (gets behind the ball, dribbles, shoots at the corner away from the keeper — from further out with a
+            full ОГОНЬ meter, volleys, skill moves, passes, lobs, tackles/grabs), keeper(), receivePoint (exported), supporters.
+tutorial.ts — Tutorial: 6 drills (run to ball, pass, shoot, tackle, skill, fire shot) on a size-3 world; places players
+            (others idle via w.scripted), checks world events, resets on failure; UI callbacks show/praise/finish.
+dude.ts   — DudeActor: procedural crash-test dummy (lathe torso/limbs, ball joints with bolts, jaw, target stickers, V-neck
+            collar, cuffs, shorts stripes, socks with bands + shin guards, studded boots, name+number on the back; small
+            details merged per material). Rig root → flip → rig → pelvis → spine → head/arms; pelvis → legs. Pose targets per
+            state smoothed into joint rotations. capture()/applyPose() (POSE_N numbers) for replays.
+arena.ts  — indoor hall: grass, emissive scrolling LED ad boards, LED ribbons above the long-side boards, LedScreen above
+            each goal (setScoreboard: score/clock/flashing ГОЛ!/ОГОНЬ!/СЕЙВ!), glass + mullions, trusses + light panels,
+            sweeper bar. setCutaway(side): hides the glass/ribbon and fades the boards of the long side the TV camera is on.
+view.ts   — ChaseCamera: mode 0 TV (default; side = attack dir, follows the ball with lead + pull to your player, pans to
+            the goal near the ends, fov 35, shake/punch), 1 high behind, 2 close chase; shot() for replays.
+            PartyRenderer: ball drawn BALL_VIS_EXTRA bigger, ballXray (GreaterDepth: seen through players), landing ring +
+            drop line, Trail ribbon (fire = flames), team rings, passRing, marker (orange when ОГОНЬ ready), arrow over your
+            player, fire fx (shockwave rings, sparks, camera punch), GRADE pass (contrast/saturation/vignette), rim light.
+            Replays: record() every frame (ball + all poses, 7 s), startReplay()/drawReplay()/stopReplay(): low tracking shot,
+            then beside the post; main.ts runs it ~1.3 s after a goal, any key skips.
+main.ts   — menu (ИГРАТЬ / ОБУЧЕНИЕ, 4 control tiles, ОГОНЬ help, teams, length, difficulty, layout, hints, auto-switch),
+            HUD (bean.css: score + ОГОНЬ bars, prompts chips under the player tag, flash, ПОВТОР + cinema bars, coach card),
+            Session(mode match|watch|tutorial), sounds (fire boom, chimes), events → toasts/banners.
+            Layouts: 'mouse' (default: WASD/arrows, LMB/J pass, RMB/K shot, MMB/C/L lob, F skill, E tackle, R grab, Q switch,
+            Space jump, Shift sprint) and 'keys' (arrows, S pass, D shot, A lob, W/F skill). Cursor aim only while the mouse
+            is in use (moved < 2.5 s ago or a mouse button was used last); J/K/L switch prompts to key labels.
+            pickTeams(): two kits far apart in sRGB, never the yellow SUN kit (dummies are yellow).
 ```
 Tests: `tests/party.test.ts` (balance, ball drop, get-up, kick, pass arrives, lob lands, dribble hold, tackle, grab,
-switching, curled shot goes in, skills, bicycle kick, keeper catch, goal → kick-off, chaos on/off, full AI match). Headless: step `PartyWorld` directly (4v4 ≈ 25× realtime).
-Debug: `?autostart`, `?watch`, `&size=3|4|5`, `&len=<s>`, `&speed=<x>`, `&q=low|medium|high`; `window.__fb` = session.
+switching, curled shot goes in, skills, bicycle kick, keeper catch, goal → kick-off, chaos on/off, keyboard assist on
+target, pass preview + combo fills ОГОНЬ, fire shot burns through, fast ball not captured, tutorial playthrough, full AI match). Headless: step `PartyWorld` directly (4v4 ≈ 25× realtime).
+Debug: `?autostart`, `?watch`, `?tutorial`, `&size=3|4|5`, `&len=<s>`, `&speed=<x>`, `&q=low|medium|high`; `window.__fb` = session.
 Build the link: `VITE_ENTRY=index npx vite build --outDir .scratch/single-party --emptyOutDir && python3 -I scripts/build-single.py .scratch/single-party <scratchpad>/party/index.html Footballbro`, then Artifact publish with url above.
 Soccerbro link build: same with `VITE_ENTRY=classic` and title `Soccerbro` (embeds the Kenney GLBs).
 

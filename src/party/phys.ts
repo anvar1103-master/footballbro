@@ -151,6 +151,11 @@ export class PWorld {
   }
 
   /** capsule approximated by three overlapping spheres */
+  /** ghost ball: passes through the players (fire shots), still bounces off the world */
+  ballGhost(ball: PBody, on: boolean) {
+    ball.b.collisionFilterMask = G_WORLD | (on ? 0 : G_BRO);
+  }
+
   capsule(r: number, halfHeight: number, mass: number, x: number, y: number, z: number, linDamp: number, angDamp: number) {
     const b = new CANNON.Body({
       mass,

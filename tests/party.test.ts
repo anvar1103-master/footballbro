@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { PartyWorld, PARTY_DT, NO_INPUT, PartyInput, ARENA } from '../src/party/world';
+import { PartyWorld, PARTY_DT, NO_INPUT, PartyInput, ARENA, HALL_H } from '../src/party/world';
+import { Tutorial } from '../src/party/tutorial';
 
 async function world(seed = 3, human = -1, size = 4) {
   return PartyWorld.create({ humanTeam: human, size, matchLength: 120, seed, events: false });
@@ -282,7 +283,7 @@ describe('bean ball', () => {
       w.step(PARTY_DT, NO_INPUT);
       maxY = Math.max(maxY, w.ballPos().y);
     }
-    expect(maxY).toBeLessThan(9.1);
+    expect(maxY).toBeLessThan(HALL_H + 0.1);
     expect(w.events.filter((e) => e.type === 'drop').length).toBe(0);
   });
 
@@ -364,6 +365,119 @@ describe('bean ball', () => {
     w.endChaos();
     expect(w.gravity).toBeLessThan(-10);
   });
+
+  it('keyboard shot without aiming goes on target (assist picks a corner)', async () => {
+    const { w, c, park } = await sandbox(31);
+    // out wide on the right, facing straight up the pitch: the shot still goes at the goal
+    c.teleport(14, 9, 1);
+    w.ball.setTranslation({ x: 14.75, y: w.ballR, z: 9 });
+    const gk = w.teamBros(1)[0];
+    for (let t = 0; t < 0.4; t += PARTY_DT) {
+      w.step(PARTY_DT, { ...NO_INPUT, kick: true });
+      park([c]);
+    }
+    w.step(PARTY_DT, NO_INPUT);
+    let crossed: number | null = null;
+    for (let t = 0; t < 2 && crossed === null; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park([c]);
+      gk.teleport(24, 14, -1);
+      const bp = w.ballPos();
+      if (bp.x > ARENA.length / 2 - 0.3) crossed = bp.z;
+    }
+    expect(crossed).not.toBe(null);
+    expect(Math.abs(crossed!)).toBeLessThan(ARENA.goalHalfW + 0.3);
+  });
+
+  it('the pass target is previewed, completed passes fill the ОГОНЬ meter', async () => {
+    const { w, c, mate, park } = await sandbox(32);
+    mate.teleport(8, 0, -1);
+    run(w, 0.3, { mx: 0.01 });
+    park([c, mate]);
+    expect(w.passTarget).toBe(mate);
+    const before = w.teams[0].fire;
+    w.step(PARTY_DT, { ...NO_INPUT, pass: true });
+    let combo = false;
+    for (let t = 0; t < 2 && !combo; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park([c, mate]);
+      combo = w.events.some((e) => e.type === 'combo' && e.team === 0);
+      w.events.length = 0;
+    }
+    expect(combo).toBe(true);
+    expect(w.teams[0].fire).toBeGreaterThan(before + 0.04);
+  });
+
+  it('a fire shot burns through a defender and the keeper', async () => {
+    const { w, c, park } = await sandbox(33);
+    c.teleport(14, 0, 1);
+    w.ball.setTranslation({ x: 14.75, y: w.ballR, z: 0 });
+    w.teams[0].fire = 1;
+    const def = w.teamBros(1)[1];
+    const gk = w.teamBros(1)[0];
+    w.step(PARTY_DT, { ...NO_INPUT, kick: true });
+    w.step(PARTY_DT, NO_INPUT);
+    expect(w.fireBall).not.toBe(null);
+    expect(w.teams[0].fire).toBe(0);
+    // a defender right in the path is flattened, the ball keeps flying
+    const bp = w.ballPos(), v = w.ballVel().normalize();
+    def.teleport(bp.x + v.x * 3, bp.z + v.z * 3, -1);
+    let burnt = false, goal = false;
+    for (let t = 0; t < 2 && !goal; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park([c, def, gk]);
+      burnt ||= w.events.some((e) => e.type === 'burn');
+      goal ||= w.events.some((e) => e.type === 'goal');
+      w.events.length = 0;
+    }
+    expect(burnt).toBe(true);
+    expect(def.state).not.toBe('up');
+    expect(goal || w.events.some((e) => e.type === 'save')).toBe(true);
+  });
+
+  it('a fast shot is not stopped dead by an opponent foot', async () => {
+    const { w, c, park } = await sandbox(34);
+    const o = w.teamBros(1)[1];
+    o.teleport(6, 0.5, -1);
+    w.ball.setTranslation({ x: 3, y: w.ballR, z: 0.5 });
+    w.ball.setLinvel({ x: 25, y: 0, z: 0 });
+    for (let t = 0; t < 0.3; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park([c, o]);
+      expect(w.holder).not.toBe(o);
+    }
+  });
+
+  it('the tutorial can be played through', async () => {
+    const w = await PartyWorld.create({ humanTeam: 0, size: 3, matchLength: 1e6, seed: 3, difficulty: 'easy', events: false, autoSwitch: true });
+    let step = 0, done = false;
+    const tut = new Tutorial(w, { show: (s) => (step = s), praise: () => {}, finish: () => (done = true) }, (a) => a);
+    let tap = 0;
+    for (let T = 0; T < 90 && !done; T += PARTY_DT) {
+      const c = w.controlled!;
+      const bp = w.ballPos();
+      const p = c.position();
+      const to = (x: number, z: number) => {
+        const d = Math.hypot(x - p.x, z - p.z) || 1;
+        return { mx: (x - p.x) / d, mz: (z - p.z) / d };
+      };
+      tap = (tap + 1) % 60;
+      const has = w.holder === c;
+      let inp: PartyInput = NO_INPUT;
+      if (step === 1) inp = { ...NO_INPUT, ...to(bp.x, bp.z) };
+      else if (step === 2) inp = { ...NO_INPUT, pass: has && tap < 5 };
+      else if (step === 3 || step === 6) inp = { ...NO_INPUT, mx: 1, kick: has && tap < 30 };
+      else if (step === 4) {
+        const o = w.holder?.team === 1 ? w.holder.position() : null;
+        if (o) inp = { ...NO_INPUT, ...to(o.x, o.z), kick: Math.hypot(o.x - p.x, o.z - p.z) < 3 && tap < 3 };
+      } else if (step === 5) inp = { ...NO_INPUT, skill: has && tap < 3 };
+      tut.preStep(PARTY_DT);
+      w.step(PARTY_DT, inp);
+      tut.onEvents(w.events);
+      w.events.length = 0;
+    }
+    expect(done).toBe(true);
+  }, 30000);
 
   it('an AI match with events produces goals and no NaN', async () => {
     const w = await PartyWorld.create({ humanTeam: -1, size: 4, matchLength: 90, seed: 4 });
