@@ -9,7 +9,11 @@ root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 chars = os.path.join(root, 'public/assets/characters')
 png = 'data:image/png;base64,' + base64.b64encode(open(os.path.join(chars, 'Textures/colormap.png'), 'rb').read()).decode()
 models = {}
-for f in sorted(glob.glob(os.path.join(chars, '*.glb'))):
+# Footballbro uses the Mixamo athlete; Soccerbro the Kenney minis
+athlete = title != 'Soccerbro'
+if athlete:
+    models['xbot'] = base64.b64encode(open(os.path.join(root, 'public/assets/athlete/xbot.glb'), 'rb').read()).decode()
+for f in ([] if athlete else sorted(glob.glob(os.path.join(chars, '*.glb')))):
     b = open(f, 'rb').read()
     jl = struct.unpack('<I', b[12:16])[0]
     j = json.loads(b[20:20 + jl])
@@ -27,7 +31,7 @@ for f in sorted(glob.glob(os.path.join(chars, '*.glb'))):
 js = open(glob.glob(os.path.join(build, 'assets/*.js'))[0]).read().replace('</script', '<\\/script')
 css = open(glob.glob(os.path.join(build, 'assets/*.css'))[0]).read()
 with open(out, 'w') as o:
-    o.write('<title>' + title + '</title>\n')
+    o.write('<meta charset="utf-8">\n<title>' + title + '</title>\n')
     o.write('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Russo+One&family=Nunito:wght@600;800&display=swap">\n')
     o.write('<style>:root{color-scheme:dark}' + css + '</style>\n<div id="game"></div><div id="ui"></div>\n')
     o.write('<script>window.__FB_MODELS=' + json.dumps(models) + ';window.__FB_PALETTE=' + json.dumps(png) + ';</script>\n')
