@@ -4,6 +4,7 @@ import { Sound } from '../audio/sound';
 import { loadCharacters } from '../render/players';
 import { settings, Quality } from '../settings';
 import { TEAM_PRESETS } from '../sim/team';
+import type { TeamSize } from '../sim/config';
 import { NO_INPUT, PARTY_DT, PartyInput, PartyWorld } from './world';
 import { PartyRenderer } from './view';
 
@@ -97,7 +98,7 @@ class Session {
     this.score = hud.querySelector('.score')!;
     this.clock = hud.querySelector('.clock')!;
     this.tag = hud.querySelector('.ptag')!;
-    this.showBanner('KICK OFF', 'неуклюжий футбол 3×3', 2);
+    this.showBanner('KICK OFF', `неуклюжий футбол ${w.opts.size}×${w.opts.size}`, 2);
     this.loop = this.loop.bind(this);
     this.raf = requestAnimationFrame(this.loop);
     (window as unknown as { __fb: Session }).__fb = this;
@@ -147,6 +148,15 @@ class Session {
         case 'shove':
           sound.bonk(4);
           break;
+        case 'setpiece':
+          if (e.text) this.showToast(e.text);
+          break;
+        case 'foul':
+          this.showToast('ФОЛ!');
+          break;
+        case 'halftime':
+          this.showBanner('ПЕРЕРЫВ', `${w.teams[0].score} - ${w.teams[1].score}`, 3);
+          break;
         case 'goal': {
           sound.crowdReact('goal');
           const t = w.teams[e.team ?? 0].info;
@@ -183,8 +193,7 @@ class Session {
     this.gfx.draw(dt);
     // HUD
     this.score.textContent = `${w.teams[0].score} - ${w.teams[1].score}`;
-    const left = Math.max(0, w.opts.matchLength - w.clock);
-    this.clock.textContent = `${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}`;
+    this.clock.textContent = w.phase === 'halftime' ? 'ПЕРЕРЫВ' : w.phase === 'over' ? 'КОНЕЦ' : `${w.minute}'`;
     if ((this.bannerT -= dt) <= 0) this.banner.classList.remove('show');
     if ((this.toastT -= dt) <= 0) this.toast.classList.remove('show');
     const c = w.controlled;
@@ -192,7 +201,7 @@ class Session {
       const s = this.gfx.project(c.position().add(new THREE.Vector3(0, 1.4, 0)));
       this.tag.style.display = 'flex';
       this.tag.style.transform = `translate(${Math.round(s.x)}px, ${Math.round(s.y)}px) translate(-50%, -100%)`;
-      (this.tag.querySelector('.pname') as HTMLElement).textContent = c.state === 'up' ? 'ТЫ' : 'ВСТАЁМ…';
+      (this.tag.querySelector('.pname') as HTMLElement).textContent = c.state === 'up' ? `ТЫ ${c.name}` : 'ВСТАЁМ…';
       const pw = this.tag.querySelector('.power') as HTMLElement;
       pw.style.display = c.charging ? 'block' : 'none';
       pw.dataset.kind = c.charging === 'pass' ? 'pass' : 'shot';
@@ -239,6 +248,12 @@ class Session {
 }
 
 let session: Session | null = null;
+const matchOpts: { size: TeamSize; half: number } = { size: 11, half: 150 };
+try {
+  Object.assign(matchOpts, JSON.parse(localStorage.getItem('footballbro.party.match') ?? '{}'));
+} catch {
+  /* storage blocked */
+}
 
 async function start(watch: boolean) {
   sound.volume = settings.volume;
@@ -246,7 +261,10 @@ async function start(watch: boolean) {
   session?.dispose();
   session = null;
   const teams = [...TEAM_PRESETS].sort(() => Math.random() - 0.5).slice(0, 2) as [typeof TEAM_PRESETS[0], typeof TEAM_PRESETS[0]];
-  const w = await PartyWorld.create({ humanTeam: watch ? -1 : 0, perTeam: 3, matchLength: 180, teams });
+  const params = new URLSearchParams(location.search);
+  const size = Number(params.get('size') ?? matchOpts.size) as TeamSize;
+  const half = Number(params.get('half') ?? matchOpts.half);
+  const w = await PartyWorld.create({ humanTeam: watch ? -1 : 0, size, halfLength: half, teams });
   session = new Session(w, watch);
 }
 function restart(watch: boolean) {
@@ -264,10 +282,14 @@ function showMenu() {
   const render = () => {
     el.innerHTML = `<div class="menu-card">
       <div class="logo">FOOTBALL<span>BRO</span></div>
-      <div class="tagline">Неуклюжий футбол · толкайся, ныряй рыбкой, падай и забивай</div>
+      <div class="tagline">Неуклюжий футбол по правилам · толкайся, ныряй рыбкой, падай и забивай</div>
       <div class="start-row">
-        <button class="btn big" id="play">ИГРАТЬ 3×3</button>
+        <button class="btn big" id="play">ИГРАТЬ</button>
         <div class="row" style="margin-top:10px"><button class="btn" id="watch">Смотреть ИИ vs ИИ</button></div>
+      </div>
+      <div class="options" style="max-width:720px;margin:0 auto 12px">
+        <div class="opt"><div class="label">Формат</div><div class="seg">${([5, 7, 11] as const).map((n) => `<button data-size="${n}" class="${n === matchOpts.size ? 'on' : ''}">${n}×${n}</button>`).join('')}</div></div>
+        <div class="opt"><div class="label">Тайм</div><div class="seg">${[[90, '1.5 мин'], [150, '2.5 мин'], [240, '4 мин']].map(([v, l]) => `<button data-half="${v}" class="${v === matchOpts.half ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       </div>
       <div class="opt" style="max-width:520px;margin:0 auto 14px"><div class="label">Раскладка</div>
         <div class="seg">${(Object.keys(LAYOUTS) as Layout[]).map((k) => `<button data-layout="${k}" class="${k === layout ? 'on' : ''}">${LAYOUTS[k].name}</button>`).join('')}</div></div>
@@ -279,13 +301,23 @@ function showMenu() {
         <div><b>${kl('jump')}</b> прыжок, <b>${kl('shove')}</b> толчок</div>
         <div><b>${kl('switch')}</b> смена игрока, <b>V</b> ближе/дальше, <b>Esc</b> пауза</div>
       </div>
-      <div class="credits">Новая версия (прототип). Классическая игра: <a href="classic.html" style="color:#ffd60a">classic.html</a></div>
+      <div class="credits">Толчок в спину или вдали от мяча и рыбка в соперника — фол. Персонажи: Kenney (CC0)</div>
     </div>`;
   };
   render();
   uiEl.appendChild(el);
   el.addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
+    if (t.dataset.size || t.dataset.half) {
+      if (t.dataset.size) matchOpts.size = Number(t.dataset.size) as TeamSize;
+      if (t.dataset.half) matchOpts.half = Number(t.dataset.half);
+      try {
+        localStorage.setItem('footballbro.party.match', JSON.stringify(matchOpts));
+      } catch {
+        /* ignore */
+      }
+      render();
+    }
     if (t.dataset.layout) {
       layout = t.dataset.layout as Layout;
       try {

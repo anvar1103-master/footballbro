@@ -11,10 +11,11 @@ import { buildCharacterModel } from '../render/players';
 import { Stadium, makeSky } from '../render/stadium';
 import type { Quality } from '../settings';
 import { Bro, BRO } from './bro';
-import { ARENA, BALL_P, PartyEvent, PartyWorld } from './world';
+import { BALL_P, PartyEvent, PartyWorld } from './world';
+import type { FieldDims } from '../sim/config';
 
-/** Visual scale of the Kenney chibi (0.55 m model -> ~1.35 m bro). */
-const MODEL_SCALE = 2.45;
+/** Visual scale of the Kenney chibi: 0.55 m model -> ~1.7 m bro (capsule 1.52 m + big head). */
+const MODEL_SCALE = 3.05;
 
 /** One bro on screen: model riding the physics body, limbs animated procedurally. */
 class BroActor {
@@ -121,19 +122,19 @@ class PartyCamera {
   camera: THREE.PerspectiveCamera;
   private look = new THREE.Vector3();
   private pos = new THREE.Vector3();
+  /** 0 = broadcast, 1 = closer */
   zoom = 0;
-  constructor(aspect: number) {
-    this.camera = new THREE.PerspectiveCamera(36, aspect, 0.5, 1500);
+  constructor(aspect: number, public f: FieldDims) {
+    this.camera = new THREE.PerspectiveCamera(34, aspect, 0.5, 1500);
   }
   follow(ball: THREE.Vector3, focus: THREE.Vector3, dt: number, snap = false) {
-    const f = ARENA;
-    // look between the ball and the controlled bro, biased to the ball
-    const lx = Math.max(-f.length / 2 + 6, Math.min(f.length / 2 - 6, ball.x * 0.75 + focus.x * 0.25));
-    const lz = Math.max(-f.width / 2 + 4, Math.min(f.width / 2 - 4, (ball.z * 0.75 + focus.z * 0.25) * 0.8));
+    const f = this.f;
+    // TV gantry on the near touchline: pans with the play, scaled to the pitch size
+    const s = Math.min(1.25, Math.max(0.8, f.length / 80)) * (this.zoom ? 0.68 : 1);
+    const lx = Math.max(-f.length / 2 + 6, Math.min(f.length / 2 - 6, ball.x * 0.8 + focus.x * 0.2));
+    const lz = Math.max(-f.width / 2 + 5, Math.min(f.width / 2 - 5, (ball.z * 0.8 + focus.z * 0.2) * 0.75));
     const wantLook = new THREE.Vector3(lx, 0, lz);
-    const h = 19 - this.zoom * 6;
-    const back = 15 - this.zoom * 4;
-    const wantPos = new THREE.Vector3(lx * 0.85, h, f.width / 2 + back + lz * 0.2);
+    const wantPos = new THREE.Vector3(lx * 0.85, 24 * s, f.width / 2 + 20 * s + lz * 0.15);
     const k = snap ? 1 : 1 - Math.exp(-dt * 3);
     this.look.lerp(wantLook, k);
     this.pos.lerp(wantPos, snap ? 1 : 1 - Math.exp(-dt * 2.2));
@@ -169,7 +170,7 @@ export class PartyRenderer {
     r.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(r.domElement);
     this.renderer = r;
-    this.cam = new PartyCamera(container.clientWidth / container.clientHeight);
+    this.cam = new PartyCamera(container.clientWidth / container.clientHeight, w.field);
 
     this.scene.fog = new THREE.Fog(0xc9def0, 200, 600);
     this.scene.add(makeSky());
@@ -181,8 +182,8 @@ export class PartyRenderer {
     const sun = new THREE.DirectionalLight(0xffe2bd, 2.6);
     sun.position.set(-30, 45, 35);
     sun.castShadow = true;
-    const ext = ARENA.length / 2 + 6;
-    Object.assign(sun.shadow.camera, { left: -ext, right: ext, top: ext, bottom: -ext, near: 5, far: 150 });
+    const ext = w.field.length / 2 + 8;
+    Object.assign(sun.shadow.camera, { left: -ext, right: ext, top: ext, bottom: -ext, near: 5, far: 220 });
     sun.shadow.mapSize.set(quality === 'high' ? 4096 : 2048, quality === 'high' ? 4096 : 2048);
     sun.shadow.bias = -0.0003;
     sun.shadow.normalBias = 0.03;
@@ -198,9 +199,9 @@ export class PartyRenderer {
       this.composer = c;
     }
 
-    this.stadium = new Stadium(ARENA, w.teams.map((t) => t.info), 0);
+    this.stadium = new Stadium(w.field, w.teams.map((t) => t.info), 0);
     this.scene.add(this.stadium.group);
-    this.nets = [new GoalNet(ARENA, -1, BALL_P.radius + 0.02), new GoalNet(ARENA, 1, BALL_P.radius + 0.02)];
+    this.nets = [new GoalNet(w.field, -1, BALL_P.radius + 0.03), new GoalNet(w.field, 1, BALL_P.radius + 0.03)];
     for (const n of this.nets) this.scene.add(n.mesh);
 
     this.ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_P.radius, 32, 16), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.4 }));

@@ -10,21 +10,21 @@ import { Quaternion, Vector3 } from 'three';
  */
 
 export const BRO = {
-  radius: 0.32,
-  halfHeight: 0.3,
-  /** capsule centre height when standing */
-  centerY: 0.62,
-  mass: 70,
-  jog: 5.4,
-  sprint: 7.6,
-  accel: 22,
+  radius: 0.36,
+  halfHeight: 0.4,
+  /** capsule centre height when standing (capsule spans 0..1.52 m; the model is ~1.7 m with its big head) */
+  centerY: 0.76,
+  mass: 75,
+  jog: 5.6,
+  sprint: 8.0,
+  accel: 20,
   airControl: 0.2,
-  uprightKp: 950,
-  uprightKd: 95,
-  yawKp: 260,
-  yawKd: 45,
+  uprightKp: 1500,
+  uprightKd: 150,
+  yawKp: 420,
+  yawKd: 72,
   jumpSpeed: 5.2,
-  kickReach: 1.15,
+  kickReach: 1.2,
 };
 
 export type BroState = 'up' | 'down' | 'getup' | 'dive';
@@ -66,6 +66,11 @@ export class Bro {
   stamina = 1;
   /** running phase for the leg animation */
   phase = 0;
+  /** formation slot: x 0 = own goal .. 1 = opponent goal, z -1..1 across */
+  home = { x: 0.5, z: 0 };
+  /** where to stand during a dead ball (set by the referee logic) */
+  spot: Vector3 | null = null;
+  number = 0;
 
   constructor(
     world: PWorld,
@@ -113,14 +118,14 @@ export class Bro {
     return this.state === 'up';
   }
 
-  teleport(x: number, z: number, faceX: number) {
+  teleport(x: number, z: number, faceX: number, keepFace = false) {
     this.body.setTranslation({ x, y: BRO.centerY + 0.05, z }, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    const yaw = Math.atan2(faceX, 0);
+    const yaw = keepFace ? Math.atan2(this.face.x, this.face.z) : Math.atan2(faceX, 0);
     _q.setFromAxisAngle(UP, yaw);
     this.body.setRotation({ x: _q.x, y: _q.y, z: _q.z, w: _q.w }, true);
-    this.face.set(Math.sign(faceX) || 1, 0, 0);
+    if (!keepFace) this.face.set(Math.sign(faceX) || 1, 0, 0);
     this.state = 'up';
     this.stateT = 0;
     this.kickT = -1;

@@ -283,7 +283,7 @@ function backToMenu() {
 async function boot() {
   const loading = document.createElement('div');
   loading.className = 'loading';
-  loading.innerHTML = 'FOOTBALLBRO<div class="bar"><div></div></div>';
+  loading.innerHTML = 'SOCCERBRO<div class="bar"><div></div></div>';
   uiEl.appendChild(loading);
   const bar = loading.querySelector('.bar div') as HTMLDivElement;
   try {

@@ -48,7 +48,7 @@ export function showMenu(root: HTMLElement, onStart: (r: MenuResult) => void, on
       `<div class="seg">${items.map(([v, l]) => `<button data-k="${key}" data-v="${v}" class="${v === cur ? 'on' : ''}">${l}</button>`).join('')}</div>`;
     el.innerHTML = `
       <div class="menu-card">
-        <div class="logo">FOOTBALL<span>BRO</span></div>
+        <div class="logo">SOCCER<span>BRO</span></div>
         <div class="tagline">Мультяшный футбол · крученые удары · живая сетка ворот</div>
         <div class="teams">
           <div class="team-pick"><div class="label">Ваша команда</div><div class="name">${h.name}</div>${kitHtml(h)}

@@ -62,8 +62,8 @@ export class PBody {
 export class PWorld {
   w: CANNON.World;
   mats: Record<Tag, CANNON.Material>;
-  /** called when the ball touches a tagged body: (tag, impact speed) */
-  onBallHit: ((tag: Tag, speed: number) => void) | null = null;
+  /** called when the ball touches a tagged body: (tag, impact speed, the other body) */
+  onBallHit: ((tag: Tag, speed: number, other: CANNON.Body) => void) | null = null;
 
   constructor(gravity: number) {
     const w = new CANNON.World({ gravity: new CANNON.Vec3(0, gravity, 0) });
@@ -128,7 +128,7 @@ export class PWorld {
       const tag = e.body.tag;
       if (!tag || !this.onBallHit) return;
       const speed = Math.abs(e.contact.getImpactVelocityAlongNormal());
-      this.onBallHit(tag, speed);
+      this.onBallHit(tag, speed, e.body);
     });
     this.add(b, 'ball');
     return new PBody(b);
