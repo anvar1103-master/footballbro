@@ -138,6 +138,52 @@ describe('bean ball', () => {
     expect(c.grabbing).toBe(null);
   });
 
+  it('switch key takes over the teammate closest to the ball, again cycles to the next', async () => {
+    const { w, c, park } = await sandbox(14);
+    const [a, b2, b3] = w.teamBros(0).filter((b) => b !== c);
+    a.teleport(-4, 3, 1);
+    b2.teleport(-8, -3, 1);
+    b3.teleport(-14, 0, 1);
+    park([c, a, b2, b3]);
+    w.ball.setTranslation({ x: -3, y: w.ballR, z: 4 });
+    w.step(PARTY_DT, NO_INPUT);
+    expect(w.switchTarget).toBe(a);
+    w.step(PARTY_DT, { ...NO_INPUT, switch: true });
+    expect(w.controlled).toBe(a);
+    w.step(PARTY_DT, NO_INPUT);
+    w.step(PARTY_DT, { ...NO_INPUT, switch: true });
+    expect(w.controlled).not.toBe(a);
+    expect(w.controlled!.team).toBe(0);
+    // the previous bean is back under AI control and keeps playing
+    run(w, 0.5);
+    expect(c.intent).toBeDefined();
+  });
+
+  it('after a pass the control follows the ball to the receiver', async () => {
+    const { w, c, mate, park } = await sandbox(15);
+    mate.teleport(10, 2, -1);
+    w.step(PARTY_DT, { ...NO_INPUT, pass: true });
+    let switched = false;
+    for (let t = 0; t < 4 && !switched; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park([c, mate]);
+      if (w.controlled === mate) switched = true;
+    }
+    expect(switched).toBe(true);
+  });
+
+  it('auto switch can be turned off', async () => {
+    const w = await PartyWorld.create({ humanTeam: 0, size: 4, matchLength: 120, seed: 16, events: false, autoSwitch: false });
+    run(w, 2.6);
+    const c = w.controlled!;
+    const mate = w.teamBros(0).find((b) => b !== c)!;
+    w.bros.forEach((b, i) => b !== mate && b.teleport(-18 + i * 1.2, -13, 1));
+    mate.teleport(5, 0, 1);
+    w.ball.setTranslation({ x: 6.05, y: w.ballR, z: 0 });
+    run(w, 0.5);
+    expect(w.controlled).toBe(c);
+  });
+
   it('a ball over the goal line counts and the next kick-off follows', async () => {
     const w = await world(12);
     run(w, 2.6);
