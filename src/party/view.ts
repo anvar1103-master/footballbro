@@ -4,39 +4,108 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { ballTexture } from '../render/ball';
 import { Particles } from '../render/effects';
 import { GoalNet } from '../render/net';
-import { AthleteActor } from './athlete';
-import { Stadium, makeSky } from '../render/stadium';
 import type { Quality } from '../settings';
-import { BALL_P, PartyEvent, PartyWorld } from './world';
-import type { FieldDims } from '../sim/config';
+import { Arena } from './arena';
+import { BeanActor } from './bean';
+import { ARENA, PartyEvent, PartyWorld } from './world';
 
-/** visual ball scale over the physics radius */
-const BALL_VIS = 1.25;
+/** bright sky dome: deep blue on top, pale at the horizon, pastel below the island */
+function makeSky() {
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+    uniforms: { top: { value: new THREE.Color('#1f7bff') }, mid: { value: new THREE.Color('#a8e0ff') }, bottom: { value: new THREE.Color('#ffd9ec') } },
+    vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: `uniform vec3 top, mid, bottom; varying vec3 vP;
+      void main(){ float h = vP.y; vec3 c = h > 0.0 ? mix(mid, top, pow(clamp(h * 1.4, 0.0, 1.0), 0.7)) : mix(mid, bottom, clamp(-h * 2.0, 0.0, 1.0));
+      gl_FragColor = vec4(c, 1.0); }`,
+  });
+  return new THREE.Mesh(new THREE.SphereGeometry(900, 32, 16), mat);
+}
 
-class PartyCamera {
-  camera: THREE.PerspectiveCamera;
-  private look = new THREE.Vector3();
-  private pos = new THREE.Vector3();
-  /** 0 = broadcast, 1 = closer */
-  zoom = 0;
-  constructor(aspect: number, public f: FieldDims) {
-    this.camera = new THREE.PerspectiveCamera(34, aspect, 0.5, 1500);
+function ballTexture() {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 256;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, 512, 256);
+  const cols = ['#ff3b6b', '#ffd23f', '#3bc8ff', '#7b5cff', '#3ee07a'];
+  // big friendly stars
+  for (let i = 0; i < 10; i++) {
+    const cx = (i % 5) * 102 + (i >= 5 ? 51 : 0) + 26, cy = i >= 5 ? 185 : 70;
+    g.fillStyle = cols[i % cols.length];
+    g.beginPath();
+    for (let k = 0; k < 10; k++) {
+      const r = k % 2 ? 16 : 38, a = (k / 10) * Math.PI * 2 - Math.PI / 2;
+      g.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.9);
+    }
+    g.fill();
   }
-  follow(ball: THREE.Vector3, focus: THREE.Vector3, dt: number, snap = false) {
-    const f = this.f;
-    // TV gantry on the near touchline: pans with the play, scaled to the pitch size
-    // closer than a real broadcast so bros and the ball read well; V = even closer
-    const s = Math.min(1, Math.max(0.72, f.length / 95)) * (this.zoom ? 0.65 : 1);
-    const lx = Math.max(-f.length / 2 + 6, Math.min(f.length / 2 - 6, ball.x * 0.8 + focus.x * 0.2));
-    const lz = Math.max(-f.width / 2 + 5, Math.min(f.width / 2 - 5, (ball.z * 0.8 + focus.z * 0.2) * 0.75));
-    const wantLook = new THREE.Vector3(lx, 0, lz);
-    const wantPos = new THREE.Vector3(lx * 0.9, 23 * s, lz + 33 * s);
-    const k = snap ? 1 : 1 - Math.exp(-dt * 3);
-    this.look.lerp(wantLook, k);
-    this.pos.lerp(wantPos, snap ? 1 : 1 - Math.exp(-dt * 2.2));
+  g.fillStyle = '#ff3b6b';
+  g.fillRect(0, 120, 512, 14);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/** Third-person chase camera behind the human's bean, looking down-field (or a TV view). */
+export class ChaseCamera {
+  camera: THREE.PerspectiveCamera;
+  /** 0 = close behind, 1 = high behind, 2 = TV side view */
+  mode = 0;
+  yaw = 0;
+  private pos = new THREE.Vector3();
+  private look = new THREE.Vector3();
+  constructor(aspect: number) {
+    this.camera = new THREE.PerspectiveCamera(55, aspect, 0.3, 2000);
+  }
+  /** forward direction on the ground (camera-relative controls use it) */
+  forward() {
+    return new THREE.Vector3(Math.cos(this.yaw), 0, Math.sin(this.yaw));
+  }
+  follow(target: THREE.Vector3, ball: THREE.Vector3, attackDir: number, dt: number, snap = false) {
+    // base: look towards the goal we attack; lean a bit towards the ball
+    const base = attackDir > 0 ? 0 : Math.PI;
+    const toBall = Math.atan2(ball.z - target.z, ball.x - target.x);
+    let d = toBall - base;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    const far = Math.hypot(ball.x - target.x, ball.z - target.z);
+    const bias = far > 2.5 ? THREE.MathUtils.clamp(d, -1.3, 1.3) * 0.6 : 0;
+    const want = base + bias;
+    let dy = want - this.yaw;
+    while (dy > Math.PI) dy -= Math.PI * 2;
+    while (dy < -Math.PI) dy += Math.PI * 2;
+    this.yaw += snap ? dy : dy * (1 - Math.exp(-dt * 1.8));
+    const f = this.forward();
+    let wantPos: THREE.Vector3, wantLook: THREE.Vector3;
+    if (this.mode === 2) {
+      wantPos = new THREE.Vector3(target.x * 0.7, 26, ARENA.width / 2 + 24);
+      wantLook = new THREE.Vector3(target.x * 0.8, 0, target.z * 0.5);
+      this.camera.fov = 40;
+    } else {
+      // ball behind or far to the side: back off and rise so both stay in shot
+      const rel = new THREE.Vector3(ball.x - target.x, 0, ball.z - target.z);
+      const along = rel.dot(f);
+      const side = Math.abs(rel.x * -f.z + rel.z * f.x);
+      const extra = Math.min(9, Math.max(0, -along) * 0.8 + Math.max(0, side - 6) * 0.35);
+      const back = (this.mode === 0 ? 7.5 : 12) + extra;
+      const up = (this.mode === 0 ? 4.2 : 8.5) + extra * 0.6;
+      const lift = Math.min(3, Math.max(0, ball.y - 3) * 0.4);
+      wantPos = target.clone().addScaledVector(f, -back).setY(up + lift);
+      // look between the bean and the ball
+      const toward = rel.clampLength(0, 9).multiplyScalar(0.4);
+      wantLook = target.clone().addScaledVector(f, 3.5).add(toward).setY(1 + lift * 0.5);
+      this.camera.fov = 55;
+    }
+    this.camera.updateProjectionMatrix();
+    const k = snap ? 1 : 1 - Math.exp(-dt * 5);
+    this.pos.lerp(wantPos, k);
+    this.look.lerp(wantLook, snap ? 1 : 1 - Math.exp(-dt * 7));
     this.camera.position.copy(this.pos);
     this.camera.lookAt(this.look);
   }
@@ -45,15 +114,16 @@ class PartyCamera {
 export class PartyRenderer {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
-  cam: PartyCamera;
+  cam: ChaseCamera;
   composer: EffectComposer | null = null;
-  actors: AthleteActor[] = [];
+  actors: BeanActor[] = [];
   nets: GoalNet[];
   ballMesh: THREE.Mesh;
   ballShadow: THREE.Mesh;
-  particles = new Particles();
-  stadium: Stadium;
-  marker: THREE.Group;
+  particles = new Particles(1400);
+  arena: Arena;
+  marker: THREE.Mesh;
+  sun: THREE.DirectionalLight;
   time = 0;
   private first = true;
 
@@ -69,23 +139,23 @@ export class PartyRenderer {
     r.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(r.domElement);
     this.renderer = r;
-    this.cam = new PartyCamera(container.clientWidth / container.clientHeight, w.field);
+    this.cam = new ChaseCamera(container.clientWidth / container.clientHeight);
 
-    this.scene.fog = new THREE.Fog(0xd5dde4, 160, 600);
-    this.scene.add(makeSky(true));
+    this.scene.fog = new THREE.Fog(0xcdeeff, 120, 420);
+    this.scene.add(makeSky());
     const pm = new THREE.PMREMGenerator(r);
     this.scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.5;
+    this.scene.environmentIntensity = 0.35;
     pm.dispose();
-    this.scene.add(new THREE.HemisphereLight(0xdde7f0, 0x47553a, 0.5));
-    const sun = new THREE.DirectionalLight(0xfff0dc, 2.9);
-    sun.position.set(-30, 45, 35);
+    this.scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x6fbf5a, 0.65));
+    const sun = new THREE.DirectionalLight(0xfff1dc, 2.8);
+    sun.position.set(-18, 40, 22);
     sun.castShadow = true;
-    const ext = w.field.length / 2 + 8;
-    Object.assign(sun.shadow.camera, { left: -ext, right: ext, top: ext, bottom: -ext, near: 5, far: 220 });
+    Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 26, bottom: -26, near: 5, far: 120 });
     sun.shadow.mapSize.set(quality === 'high' ? 4096 : 2048, quality === 'high' ? 4096 : 2048);
     sun.shadow.bias = -0.0003;
     sun.shadow.normalBias = 0.03;
+    this.sun = sun;
     this.scene.add(sun, sun.target);
 
     if (!low) {
@@ -93,26 +163,26 @@ export class PartyRenderer {
       const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
       const c = new EffectComposer(r, rt);
       c.addPass(new RenderPass(this.scene, this.cam.camera));
-      if (quality === 'high') c.addPass(new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.2, 0.5, 0.92));
+      if (quality === 'high') c.addPass(new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.25, 0.6, 0.9));
       c.addPass(new OutputPass());
       this.composer = c;
     }
 
-    this.stadium = new Stadium(w.field, w.teams.map((t) => t.info), 0, true);
-    this.scene.add(this.stadium.group);
-    this.nets = [new GoalNet(w.field, -1, BALL_P.radius * BALL_VIS + 0.02), new GoalNet(w.field, 1, BALL_P.radius * BALL_VIS + 0.02)];
+    this.arena = new Arena(w.teams.map((t) => t.info));
+    this.scene.add(this.arena.group);
+    this.nets = [new GoalNet(ARENA, -1, w.ballR), new GoalNet(ARENA, 1, w.ballR)];
     for (const n of this.nets) this.scene.add(n.mesh);
 
-    // drawn a bit larger than the physics ball so it reads from the TV camera
-    this.ballMesh = new THREE.Mesh(new THREE.SphereGeometry(BALL_P.radius * BALL_VIS, 32, 16), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.35, emissive: 0xffffff, emissiveIntensity: 0.12 }));
+    this.ballMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 24), new THREE.MeshPhysicalMaterial({ map: ballTexture(), roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.15 }));
     this.ballMesh.castShadow = true;
     this.scene.add(this.ballMesh);
+    // soft blob under the ball: tells you where it will land
     const sc = document.createElement('canvas');
     sc.width = sc.height = 64;
     const g = sc.getContext('2d')!;
     const gr = g.createRadialGradient(32, 32, 2, 32, 32, 32);
-    gr.addColorStop(0, 'rgba(0,0,0,0.5)');
-    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    gr.addColorStop(0, 'rgba(40,0,80,0.55)');
+    gr.addColorStop(1, 'rgba(40,0,80,0)');
     g.fillStyle = gr;
     g.fillRect(0, 0, 64, 64);
     this.ballShadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(sc), transparent: true, depthWrite: false }));
@@ -121,18 +191,13 @@ export class PartyRenderer {
     this.scene.add(this.particles.mesh);
 
     for (const b of w.bros) {
-      const a = new AthleteActor(b, w.teams[b.team].info, b.team, w.teams[1 - b.team].info);
+      const a = new BeanActor(b, w.teams[b.team].info, b === w.controlled);
       this.actors.push(a);
       this.scene.add(a.root, a.stars);
     }
-    this.marker = new THREE.Group();
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.66, 32), new THREE.MeshBasicMaterial({ color: 0xffe14d, transparent: true, opacity: 0.9, depthWrite: false }));
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.03;
-    const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.4, 3), new THREE.MeshBasicMaterial({ color: 0xffe14d }));
-    arrow.rotation.x = Math.PI;
-    arrow.name = 'arrow';
-    this.marker.add(ring, arrow);
+    // ring under your bean
+    this.marker = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.72, 40), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.85, depthWrite: false }));
+    this.marker.rotation.x = -Math.PI / 2;
     this.scene.add(this.marker);
     window.addEventListener('resize', () => this.resize());
   }
@@ -147,43 +212,50 @@ export class PartyRenderer {
 
   handleEvents(events: PartyEvent[]) {
     for (const e of events) {
-      if (e.type === 'kick' && e.pos) this.particles.grass(e.pos, (e.strength ?? 8) * 0.4);
-      if ((e.type === 'bonk' || e.type === 'shove') && e.pos) this.particles.grass(e.pos, 10);
+      if ((e.type === 'kick' && (e.strength ?? 0) > 6) || e.type === 'tackle' || e.type === 'header') if (e.pos) this.particles.grass(e.pos, (e.strength ?? 8) * 0.5);
+      if (e.type === 'bonk' && e.pos) this.particles.grass(e.pos, 12);
       if (e.type === 'goal') {
         const t = this.w.teams[e.team ?? 0].info;
-        this.particles.confetti(e.pos ?? new THREE.Vector3(), [t.primary, t.secondary, '#ffd60a', '#ffffff']);
-        this.stadium.hype(1);
+        this.particles.confetti(e.pos ?? new THREE.Vector3(), [t.primary, t.secondary, '#ffd60a', '#ffffff', '#ff7ab8']);
+        this.arena.hype = 1;
       }
-      if (e.type === 'post' || e.type === 'save') this.stadium.hype(0.4);
+      if (e.type === 'post') this.arena.hype = Math.max(this.arena.hype, 0.5);
     }
   }
 
   draw(dt: number) {
     this.time += dt;
     const w = this.w;
-    for (const a of this.actors) a.update(dt, this.time);
     const bp = w.ballPos();
+    for (const a of this.actors) {
+      const g = a.bro.grabbing;
+      a.update(dt, this.time, bp, g ? g.position() : null);
+    }
     const br = w.ball.rotation();
     this.ballMesh.position.copy(bp);
-    this.ballMesh.position.y += BALL_P.radius * (BALL_VIS - 1);
     this.ballMesh.quaternion.set(br.x, br.y, br.z, br.w);
-    const hgt = Math.max(0, bp.y - BALL_P.radius);
-    const s = BALL_P.radius * 2.6 * (1 + hgt * 0.2);
+    this.ballMesh.scale.setScalar(w.ballR);
+    const hgt = Math.max(0, bp.y - w.ballR);
+    const s = w.ballR * 2.4 * (1 + hgt * 0.12);
     this.ballShadow.scale.set(s, s, 1);
-    this.ballShadow.position.set(bp.x, 0.02, bp.z);
-    for (const n of this.nets) n.update(dt, bp, this.time);
+    this.ballShadow.position.set(bp.x, 0.03, bp.z);
+    (this.ballShadow.material as THREE.MeshBasicMaterial).opacity = Math.max(0.35, 1 - hgt * 0.06);
+    for (const n of this.nets) {
+      n.ballRadius = w.ballR;
+      n.update(dt, bp, this.time);
+    }
     this.particles.update(dt);
-    this.stadium.update(dt, this.time);
+    this.arena.update(dt, this.time, w.sweeper);
     const c = w.controlled;
     this.marker.visible = !!c;
     const focus = c ? c.position() : bp.clone();
     if (c) {
-      this.marker.position.set(focus.x, 0, focus.z);
-      const arrow = this.marker.getObjectByName('arrow')!;
-      arrow.position.y = 2.0 + Math.sin(this.time * 5) * 0.1;
-      arrow.rotation.y += dt * 2;
+      this.marker.position.set(focus.x, 0.04, focus.z);
+      this.marker.scale.setScalar(1 + Math.sin(this.time * 5) * 0.06);
     }
-    this.cam.follow(bp, focus, dt, this.first);
+    const attack = c ? w.teams[c.team].dir : 1;
+    if (!c && this.cam.mode < 2) this.cam.mode = 2;
+    this.cam.follow(focus, bp, attack, dt, this.first);
     this.first = false;
     if (this.composer) this.composer.render();
     else this.renderer.render(this.scene, this.cam.camera);

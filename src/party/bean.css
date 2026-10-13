@@ -1,0 +1,54 @@
+/* Footballbro "Bean Ball": Fall Guys-style bubbly HUD and menu */
+:root { --bb-pink: #ff4fa3; --bb-purple: #7b3fe4; --bb-yellow: #ffd23f; --bb-cyan: #3bc8ff; }
+
+.bb-menu { background: radial-gradient(ellipse at 50% 0%, #8fe3ff 0%, #4aa8ff 40%, #7b3fe4 100%); }
+.bb-menu::before { opacity: 0.18; background:
+  radial-gradient(circle at 20% 30%, #fff 0 3px, transparent 4px) 0 0 / 60px 60px,
+  radial-gradient(circle at 70% 70%, #fff 0 2px, transparent 3px) 0 0 / 45px 45px; }
+.bb-card { text-align: center; }
+.bb-logo { font-family: var(--font-title); font-size: clamp(54px, min(11vw, 13vh), 120px); line-height: 0.9; color: #fff;
+  -webkit-text-stroke: 3px #3a1670; text-shadow: 0 8px 0 #3a1670, 0 14px 24px rgba(30,0,60,0.35); transform: rotate(-2deg); margin: 8px 0 6px; }
+.bb-logo span { color: var(--bb-yellow); }
+.bb-tag-line { font-weight: 800; font-size: 17px; margin-bottom: 16px; text-shadow: 0 2px 0 rgba(40,0,80,0.4); }
+.bb-play { background: var(--bb-yellow) !important; box-shadow: 0 7px 0 #c48a00 !important; margin-bottom: 18px; font-size: 40px !important;
+  animation: bb-pulse 1.4s ease-in-out infinite; }
+@keyframes bb-pulse { 50% { transform: scale(1.05) rotate(-1deg); } }
+.bb-opts .opt, .bb-controls { background: rgba(40, 10, 90, 0.45); border: 2px solid rgba(255,255,255,0.25); border-radius: 18px; }
+.bb-opts .seg button { border-radius: 999px; }
+.bb-opts .seg button.on, .bb-controls b { background: var(--bb-yellow); color: #3a1670; }
+.bb-controls { text-align: left; margin-bottom: 12px; }
+.bb-controls b { padding: 0 6px; border-radius: 6px; }
+.bb-card .row { display: flex; justify-content: center; }
+
+.bb-hud { position: absolute; inset: 0; font-family: var(--font-title); }
+.bb-score { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; }
+.bb-team { background: var(--c); color: #fff; padding: 6px 14px; border-radius: 999px; font-size: 22px; -webkit-text-stroke: 1px rgba(0,0,0,0.35);
+  box-shadow: 0 4px 0 rgba(0,0,0,0.25); border: 3px solid #fff; }
+.bb-num { background: #fff; color: #3a1670; padding: 4px 18px; border-radius: 16px; font-size: 32px; box-shadow: 0 5px 0 #3a1670; }
+.bb-clock { position: absolute; top: 66px; left: 50%; transform: translateX(-50%); background: rgba(58, 22, 112, 0.85); color: #fff; padding: 2px 14px;
+  border-radius: 999px; font-size: 20px; }
+.bb-clock.hurry { background: #ff3b6b; animation: bb-pulse 0.5s infinite; }
+.bb-chaos { display: none; position: absolute; top: 100px; left: 50%; transform: translateX(-50%); background: var(--bb-pink); color: #fff;
+  padding: 4px 14px 8px; border-radius: 14px; font-size: 18px; box-shadow: 0 4px 0 #a01e63; text-align: center; min-width: 150px; }
+.bb-chaos i { display: block; height: 5px; background: #fff; border-radius: 3px; margin-top: 3px; }
+.bb-banner { position: absolute; top: 24%; left: 50%; transform: translate(-50%, -50%) scale(0.2); opacity: 0; text-align: center;
+  transition: transform 0.35s cubic-bezier(.2,1.8,.4,1), opacity 0.2s; white-space: nowrap; }
+.bb-banner.show { transform: translate(-50%, -50%) scale(1) rotate(-3deg); opacity: 1; }
+.bb-banner span { display: block; font-size: clamp(56px, 11vw, 120px); color: var(--c); -webkit-text-stroke: 4px #3a1670;
+  text-shadow: 0 8px 0 #3a1670, 0 18px 30px rgba(0,0,0,0.3); }
+.bb-banner small { display: inline-block; font-size: 24px; background: #3a1670; color: #fff; padding: 4px 16px; border-radius: 999px; margin-top: 6px; }
+.bb-count { position: absolute; top: 42%; left: 50%; transform: translate(-50%, -50%) scale(0.3); opacity: 0; font-size: clamp(80px, 16vw, 170px);
+  color: var(--bb-yellow); -webkit-text-stroke: 5px #3a1670; text-shadow: 0 10px 0 #3a1670; transition: transform 0.3s cubic-bezier(.2,1.8,.4,1), opacity 0.2s; }
+.bb-count.show { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+.bb-toast { position: absolute; top: 60%; left: 50%; transform: translate(-50%, 0) scale(0.5); opacity: 0; font-size: 34px; color: #fff;
+  -webkit-text-stroke: 2px #3a1670; text-shadow: 0 4px 0 #3a1670; transition: transform 0.25s cubic-bezier(.2,1.8,.4,1), opacity 0.2s; }
+.bb-toast.show { transform: translate(-50%, 0) scale(1) rotate(2deg); opacity: 1; }
+.bb-tag { position: absolute; left: 0; top: 0; display: none; flex-direction: column; align-items: center; gap: 3px; }
+.bb-name { background: var(--bb-yellow); color: #3a1670; font-size: 15px; padding: 1px 10px; border-radius: 999px; border: 2px solid #3a1670; }
+.bb-power { width: 64px; height: 9px; background: rgba(58,22,112,0.7); border-radius: 5px; overflow: hidden; border: 2px solid #fff; }
+.bb-power div { height: 100%; background: linear-gradient(90deg, #3ee07a, #ffd23f, #ff3b6b); }
+.bb-hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); font-family: var(--font-body); font-weight: 700; font-size: 13px;
+  background: rgba(58, 22, 112, 0.7); padding: 6px 14px; border-radius: 999px; white-space: nowrap; max-width: 96vw; overflow: hidden; text-overflow: ellipsis; }
+.bb-hint b { color: var(--bb-yellow); }
+.bb-panel { background: linear-gradient(160deg, #7b3fe4, #ff4fa3) !important; border: 4px solid #fff !important; }
+.bb-panel h2 { -webkit-text-stroke: 2px #3a1670; text-shadow: 0 5px 0 #3a1670; }

@@ -1,47 +1,47 @@
 # Footballbro — project map for Claude
 
 ## TWO GAMES IN THIS REPO — read first
-- **Footballbro = the CURRENT game.** `index.html` → `src/party/`. Clumsy wobbly bros (Fall Guys-like) playing real-rules
-  football (5×5 / 7×7 / 11×11, real pitch sizes from `fieldFor`) vs AI, broadcast camera, you control one bro and switch (Q).
-  This is what the user tests and what we develop.
-  Playable link: https://claude.ai/artifact/BCqgxNdt5aL2t2m8hSNK5v
-- **Soccerbro = the OLD FIFA-style game** (renamed from "classic"), kept only as a library of ready code (ball physics, kick solvers, stadium,
-  cloth net, kit recolouring, sounds, HUD styles). `classic.html` → `src/main.ts`, `src/sim/`, `src/render/`, `src/ui/`.
-  Old link: https://claude.ai/artifact/1pQLJehMiRup8dydP6x37b. Don't develop it further unless asked; reuse from it.
-- Roadmap the user agreed: (1) wobbly bros prototype ✔ → (2) full rules + real scale ✔ (kick-offs, halves w/ side swap,
-  throw-ins, corners, goal kicks, fouls → free kicks / penalties) → next: polish AI/keepers/assists → (3) dirty tricks:
-  shirt grab, shove, flopping for fouls, referee bro with cards → (4) celebrations, pile-ons, replays → (5) later: 3rd-person
-  camera mode + playing a single bro. No gamepads (user & friends use keyboard); no local co-op for now; vs AI only.
+- **Footballbro = the CURRENT game: "Bean Ball", a Fall Guys-style football party game.** `index.html` → `src/party/`.
+  Jelly beans built in code (no character assets), you are ONE bean (crown) in a 3/4/5-a-side team vs AI beans,
+  third-person chase camera, giant bouncy ball dropped from the sky at every kick-off, walled sky-island arena
+  (no outs, no fouls, no offside), tackles, grabs, headers, chaos events every ~35 s, golden goal on a draw.
+  Playable link: https://claude.ai/artifact/BCqgxNdt5aL2t2m8hSNK5v · GitHub Pages: https://anvar1103-master.github.io/footballbro/
+- History / user decisions: realistic football sim (real rules, real pitch, Mixamo athletes) was REJECTED by the user
+  ("this is just a FIFA clone, impossible to play"). Keep it a funny arcade party game with nice graphics and silly controls.
+- **Soccerbro = the OLD FIFA-style game**, kept only as a library of ready code (ball physics, cloth net — the user likes
+  the goal net —, sounds, particles). `classic.html` → `src/main.ts`, `src/sim/`, `src/render/`, `src/ui/`.
+  Old link: https://claude.ai/artifact/1pQLJehMiRup8dydP6x37b. Don't develop it further unless asked.
+- Keyboard only (no gamepads), vs AI only, no local co-op for now.
 
-### Party edition map (src/party/)
+### Footballbro map (src/party/)
 ```
-phys.ts   — thin layer over cannon-es (pure JS! Rapier/WASM is blocked by the artifact CSP). PBody/PWorld, tags, ball-hit callback.
-            Bro-ground friction is 0 on purpose (grip tripped them); "down" bros get scrape damping in bro.ts.
-bro.ts    — Bro: capsule (3 spheres) kept upright by under-damped PD torque (= wobble); run impulse applied LEAN m above COM;
-            states up/down/getup/dive; jump, dive, stamina, kick/shove timers for animation.
-world.ts  — PartyWorld: field = fieldFor(size) (real metres), boards as low walls, ball r=0.15 with drag+Magnus+classic rolling
-            resistance (so classic groundPassSpeed works), goals+soft net boxes, phases kickoff/play/setpiece/goal/halftime/over,
-            SetPiece {kind,taker,pos}, layout() spots, checkBall() → goal/throw-in/corner/goal kick, foul() → free kick/penalty
-            (shove in the back / off the ball, dive into a player), kick() (auto line-up for dead balls), throwBall(), shove(),
-            human(): called ONCE per step before AI (calling it inside the bro loop caused the old Q-switch bug), passTo follow.
-brain.ts  — AI: formationSpot (classic FORMATIONS shifted with ball), chaser/cover/support, laneClear passes, shots in range,
-            keeper shuffle/dive/clear, deadBall(): walk to spot; AI takers per set-piece kind.
-athlete.ts— AthleteActor: Mixamo Xbot mannequin (public/assets/athlete/xbot.glb, prepared by scripts/prepare-athlete.mjs),
-            kit painted in the shader by bind-pose height zones (shirt/shorts/socks/boots/skin, GK gloves), hair cap on the
-            Head bone, idle/walk/run clips blended by speed + Fall Guys clumsiness: spring-driven floppy arms & head,
-            squash/stretch on jump/landing, windmill arms in the air / off balance, flailing when down, superman dive.
-            Bone tweaks use turn(bone, modelSpaceAxis, angle) (AX = character's left, AZ = forward) — rig-axis independent.
-view.ts   — PartyRenderer: reuses classic Stadium (real=true: muted broadcast look)/GoalNet/ballTexture; ball drawn
-            BALL_VIS=1.25× physics radius; dizzy stars; PartyCamera (V = zoom).
-main.ts   — menu (layout arrows/WASD), HUD, sounds, pause, full time. Keys: arrows+D kick/S pass/A dive/W jump/E shove/Q switch.
+phys.ts   — thin layer over cannon-es (pure JS! WASM is blocked by the artifact CSP). Boxes (with yaw), capsules, ball
+            (setSphereRadius for the mega-ball event), setGravity, groundBelow ray. Bouncy inflatable walls.
+bro.ts    — Bro = bean body: capsule (r .36, 1.52 m) kept upright by under-damped PD torque (= wobble), run impulse above
+            COM (leans), states up/down/getup/dive, jump, stamina; speedMul/accelMul (events, grabs), grabbing/grabT, celebrate.
+world.ts  — PartyWorld: ARENA 46×30 (also a FieldDims for GoalNet), walls + chamfered corners, goals 7.2×3 m, ball r .5.
+            Phases countdown(2.4 s, ball hovers) → play → goal(3.6 s, slow-mo, losers flop) → over; golden goal.
+            Actions: shoot (aim assist to goal), passTo (ground, leads the run), lob (lands on target), tackle = dive,
+            tryGrab/release, headers on contact while airborne; human() buffers kick/pass/lob ~0.6 s until the ball is
+            in reach. dribbleAssist sticky holder. Chaos: mega / lowgrav / ice / turbo / sweeper (rotating bar).
+            Input is WORLD-space (main.ts maps keys camera-relative).
+brain.ts  — AI per bean: chaser (gets behind the ball, dribbles, shoots, passes when blocked, lobs from wide, tackles/
+            grabs the opponent carrier), back bean (guards goal, dives at shots), supporters spread ahead. Uses w.rng.
+bean.ts   — BeanActor: glossy capsule with canvas pattern + number (own linear-in-height UVs!), outline hull, googly eyes
+            that follow the ball + blinking, smile/“O” mouth, floppy arms (springs), stubby legs, hats (crown = human).
+arena.ts  — sky island: pitch texture, extruded slab + rock cone, candy-striped inflatable tubes, goals + arches,
+            sweeper bar, spectator beans (instanced), balloons, clouds, mini islands.
+view.ts   — PartyRenderer + ChaseCamera (behind the bean looking at the attacked goal, biased to the ball, backs off
+            when the ball is behind; V: close / high / TV). Reuses GoalNet (render/net.ts) and Particles.
+main.ts   — menu (teams 3/4/5, length, difficulty, layout), HUD (bean.css), sounds, countdown, events, pause, end.
+            Keys (arrows layout): arrows run, Shift sprint, Space/W jump, D kick (hold), S pass, A lob, E tackle, Q grab.
+            WASD layout: J kick, K pass, L lob, I tackle, U grab, Space jump.
 ```
-Ball feel: ground kicks start with rolling spin and ballForces keeps spin consistent with rolling (otherwise cannon friction
-eats ~30% of a pass); dribbleAssist keeps a sticky `holder` (hysteresis: wider cone/reach for the current holder).
-Tests: `tests/party.test.ts` (balance, get-up, kick, dive, switch, throw-in, dribble hold + pass pace, full AI match). Headless: step `PartyWorld`
-directly (11v11 ≈ 10× realtime). Bro capsule is 1.52 m (r 0.36 — narrower breaks balance, see tests); athlete model ~1.8 m.
-Single-file build embeds xbot.glb for Footballbro and the Kenney GLBs only for title `Soccerbro`.
+Tests: `tests/party.test.ts` (balance, ball drop, get-up, kick power/direction, pass arrives, lob lands, dribble hold,
+tackle, grab, goal → kick-off, chaos on/off, full AI match). Headless: step `PartyWorld` directly (4v4 ≈ 25× realtime).
+Debug: `?autostart`, `?watch`, `&size=3|4|5`, `&len=<s>`, `&speed=<x>`, `&q=low|medium|high`; `window.__fb` = session.
 Build the link: `VITE_ENTRY=index npx vite build --outDir .scratch/single-party --emptyOutDir && python3 -I scripts/build-single.py .scratch/single-party <scratchpad>/party/index.html Footballbro`, then Artifact publish with url above.
-Soccerbro link build: same with `VITE_ENTRY=classic` and title `Soccerbro`.
+Soccerbro link build: same with `VITE_ENTRY=classic` and title `Soccerbro` (embeds the Kenney GLBs).
 
 ---
 ## Soccerbro (old FIFA-style game) reference
