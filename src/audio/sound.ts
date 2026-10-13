@@ -148,6 +148,20 @@ export class Sound {
     }
   }
 
+  /** cartoon "boing" for bros bumping / falling */
+  bonk(strength = 5) {
+    if (!this.ctx) return;
+    const s = Math.min(1, strength / 10);
+    this.tone(380 + Math.random() * 120, 0.22, 0.12 + s * 0.2, 'sine', 120);
+    this.noise(0.08, 'lowpass', 600, 0.7, 0.15 + s * 0.2);
+  }
+
+  /** quick "hup" for jumps / dives */
+  whoosh() {
+    if (!this.ctx) return;
+    this.noise(0.25, 'bandpass', 1400, 1.5, 0.12, 0.05);
+  }
+
   crowdReact(kind: 'goal' | 'ooh' | 'cheer') {
     if (!this.ctx) return;
     if (kind === 'goal') {

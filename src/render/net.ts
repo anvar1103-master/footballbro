@@ -20,7 +20,8 @@ const TILE = 0.12; // size of one diamond of the net texture (m)
 const SLACK = 1.05; // rest length vs. rigged length: real nets hang loose
 
 let netTexture: THREE.Texture | null = null;
-function getNetTexture() {
+/** (legacy) bitmap net pattern — kept for reference; the shader version below is used. */
+export function getNetTexture() {
   if (netTexture) return netTexture;
   const c = document.createElement('canvas');
   c.width = c.height = 128;
@@ -66,7 +67,7 @@ export class GoalNet {
   private lastBall = new THREE.Vector3(1e9, 0, 0);
   private geo: THREE.BufferGeometry;
 
-  constructor(public f: FieldDims, public dir: number) {
+  constructor(public f: FieldDims, public dir: number, public ballRadius = BALL.radius * BALL_VIS_SCALE) {
     const pts: number[] = [];
     const uvs: number[] = [];
     const pin: number[] = [];
@@ -143,17 +144,43 @@ export class GoalNet {
     geo.setIndex(idx);
     geo.computeVertexNormals();
     this.geo = geo;
+    geo.setAttribute('netUv', new THREE.Float32BufferAttribute(uvs, 2));
+    // Procedural diamond mesh: line width is kept >= ~1 px with fwidth(), so the net never
+    // vanishes at broadcast distance (a texture's sub-pixel threads would mip away).
     const mat = new THREE.MeshStandardMaterial({
-      color: 0xeef1f6,
-      map: getNetTexture(),
-      alphaTest: 0.35,
+      color: 0xffffff,
+      emissive: 0x9aa4b4,
+      emissiveIntensity: 0.35,
       side: THREE.DoubleSide,
       roughness: 0.85,
       metalness: 0,
-      alphaToCoverage: true,
+      transparent: true,
+      depthWrite: false,
     });
+    mat.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute vec2 netUv;\nvarying vec2 vNetUv;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvNetUv = netUv;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vNetUv;')
+        .replace(
+          '#include <alphatest_fragment>',
+          `#include <alphatest_fragment>
+          vec2 dg = vec2(vNetUv.x + vNetUv.y, vNetUv.x - vNetUv.y) * 0.5;
+          vec2 dist = abs(fract(dg) - 0.5);
+          vec2 fw = max(fwidth(dg), vec2(1e-4));
+          float thick = 0.07;
+          vec2 a = 1.0 - smoothstep(thick - fw, thick + fw * 1.5, 0.5 - dist);
+          float lineA = max(a.x, a.y);
+          // far away the cells are sub-pixel: fade to a soft veil instead of shimmering
+          float veil = clamp(max(fw.x, fw.y) * 2.5, 0.0, 1.0);
+          diffuseColor.a = mix(lineA, 0.38, veil) * 0.95;
+          if (diffuseColor.a < 0.02) discard;`,
+        );
+    };
     this.mesh = new THREE.Mesh(geo, mat);
-    this.mesh.castShadow = true;
+    this.mesh.castShadow = false;
+    this.mesh.renderOrder = 2;
     this.mesh.frustumCulled = false;
   }
 
@@ -185,7 +212,7 @@ export class GoalNet {
     const sub = idle ? 1 : 3;
     const h = Math.min(dt * (idle ? 3 : 1), 1 / 20) / sub;
     const p = this.pos, q = this.prev, rest = this.rest;
-    const R = BALL.radius * BALL_VIS_SCALE + 0.04;
+    const R = this.ballRadius + 0.04;
     const from = this.lastBall.x > 1e8 ? ball.clone() : this.lastBall.clone();
     const tmp = new THREE.Vector3();
     for (let s = 0; s < sub; s++) {

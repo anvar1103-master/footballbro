@@ -1,5 +1,35 @@
 # Footballbro — project map for Claude
 
+## TWO GAMES IN THIS REPO — read first
+- **footballbro (party edition) = the CURRENT game.** `index.html` → `src/party/`. Clumsy wobbly bros (Fall Guys-like)
+  playing 3×3 football vs AI, broadcast camera, you control one bro and switch. This is what the user tests and what we develop.
+  Playable link: https://claude.ai/artifact/BCqgxNdt5aL2t2m8hSNK5v
+- **Classic (FIFA-style) = the OLD game**, kept only as a library of ready code (ball physics, kick solvers, stadium,
+  cloth net, kit recolouring, sounds, HUD styles). `classic.html` → `src/main.ts`, `src/sim/`, `src/render/`, `src/ui/`.
+  Old link: https://claude.ai/artifact/1pQLJehMiRup8dydP6x37b. Don't develop it further unless asked; reuse from it.
+- Roadmap the user agreed: (1) wobbly bros prototype ✔ → (2) full match polish: AI, keepers, assists → (3) dirty tricks:
+  shirt grab, shove, flopping for fouls, referee bro with cards → (4) celebrations, pile-ons, replays → (5) later: 3rd-person
+  camera mode + playing a single bro. No gamepads (user & friends use keyboard); no local co-op for now; vs AI only.
+
+### Party edition map (src/party/)
+```
+phys.ts   — thin layer over cannon-es (pure JS! Rapier/WASM is blocked by the artifact CSP). PBody/PWorld, tags, ball-hit callback.
+            Bro-ground friction is 0 on purpose (grip tripped them); "down" bros get scrape damping in bro.ts.
+bro.ts    — Bro: capsule (3 spheres) kept upright by under-damped PD torque (= wobble); run impulse applied LEAN m above COM;
+            states up/down/getup/dive; jump, dive, stamina, kick/shove timers for animation.
+world.ts  — PartyWorld: arena (ARENA dims, boards = walls, no throw-ins), ball with drag+Magnus, goals+soft net boxes,
+            dribble magnet assist, bro collisions → knockdowns, kick() with aim assist, shove(), human control, scoring, phases.
+brain.ts  — AI: keeper shuffles/dives/clears; chaser gets behind ball and pushes/kicks goalwards; supports spread; random shoves/dives.
+view.ts   — PartyRenderer: reuses classic Stadium/GoalNet(ball radius param)/ballTexture/buildCharacterModel; procedural limb
+            animation on Kenney bones (leg-left/right, arm-left/right, head); dizzy stars; PartyCamera (V = zoom).
+main.ts   — menu (layout arrows/WASD), HUD, sounds, pause, full time. Keys: arrows+D kick/S pass/A dive/W jump/E shove/Q switch.
+```
+Tests: `tests/party.test.ts`. Headless check: write a tiny script that steps `PartyWorld` (see tests) — ~20× realtime.
+Build the link: `VITE_ENTRY=index npx vite build --outDir .scratch/single-party --emptyOutDir && python3 -I scripts/build-single.py .scratch/single-party <scratchpad>/party/index.html Footballbro`, then Artifact publish with url above.
+
+---
+## Classic game reference (old)
+
 Cartoon 3D football (soccer) game. Browser, **Three.js + TypeScript + Vite**. No backend.
 Focus: realistic ball physics (drag, Magnus curl/"finesse", spin bounces), a cloth goal net that ripples,
 fun arcade gameplay, cute visuals. Rules are intentionally basic (no offside, no cards).
@@ -12,7 +42,7 @@ The user writes in Russian — answer in Russian. UI strings are Russian.
 - `npm run sim -- [matches] [size] [halfSec] [seed]` — **headless AI-vs-AI match runner** (`scripts/simulate.ts`): goals, shots, pass completion, ball-x histogram, stalls, NaN. Run it after any change in `src/sim/`. Healthy (11v11, 120 s halves): ~1–3 goals, ~10 shots, pass completion ≥55%, 0 stalls, 0 NaN.
 - `npm run shots` — Playwright screenshots (`scripts/screenshot.ts`, needs dev server running; Chromium at `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, swiftshader is slow ≈2 fps → use `&lq`, `&speed`).
 - `npm run build` — typecheck + production build to `dist/` (relative base `./`).
-- `npx vite build --outDir .scratch/single-build && python3 -I scripts/build-single.py .scratch/single-build <out.html>` — ONE self-contained HTML (models inlined via window.__FB_MODELS); this is what is published to the artifact.
+- Single-file builds: `VITE_ENTRY=index|classic npx vite build --outDir <dir> && python3 -I scripts/build-single.py <dir> <out.html> [title]` — ONE self-contained HTML (models inlined via window.__FB_MODELS). Artifact CSP forbids fetch and WASM.
 - `scripts/build-artifact.sh <outDir>` — bundle for claude.ai artifact hosting (.glb not served there → models converted to `*.gltf.json` via `scripts/glb2gltf.py`, `VITE_MODEL_EXT` env). Published playable build: https://claude.ai/artifact/1pQLJehMiRup8dydP6x37b (republish with Artifact tool, url=that link, files map of outDir).
 - `.github/workflows/pages.yml` deploys `dist/` to GitHub Pages on push to main (user must enable Pages → Source: GitHub Actions).
 - `.scratch/` is gitignored — put throwaway debug scripts there (run with `npx tsx .scratch/x.ts`).
