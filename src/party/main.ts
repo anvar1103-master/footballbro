@@ -108,7 +108,7 @@ class Session {
       <div class="bb-toast"></div>
       <div class="bb-tag"><div class="bb-name">ТЫ</div><div class="bb-power"><div></div></div></div>
       <div class="bb-sw">${kl('switch')}</div>
-      <div class="bb-hint">${watch ? 'Режим наблюдения · Esc пауза' : `<b>${kl('kick')}</b> удар (держи) · <b>${kl('pass')}</b> пас · <b>${kl('lob')}</b> навес · <b>${kl('tackle')}</b> подкат · <b>${kl('grab')}</b> схватить · <b>${kl('switch')}</b> смена · <b>${kl('jump')}</b> прыжок · <b>${kl('sprint')}</b> спринт · <b>V</b> камера · <b>Esc</b> пауза`}</div>`;
+      <div class="bb-hint">${watch ? 'Режим наблюдения · Esc пауза' : `<b>${kl('kick')}</b> удар (держи) · <b>${kl('pass')}</b> пас · <b>${kl('lob')}</b> навес · <b>${kl('tackle')}</b> подкат · <b>${kl('skill')}</b> финт · <b>${kl('grab')}</b> схватить · <b>${kl('switch')}</b> смена · <b>${kl('jump')}</b> прыжок · <b>${kl('sprint')}</b> спринт · <b>V</b> камера · <b>Esc</b> пауза`}</div>`;
     uiEl.appendChild(hud);
     this.hud = hud;
     this.banner = hud.querySelector('.bb-banner')!;
@@ -188,6 +188,21 @@ class Session {
         case 'grab':
           sound.whoosh();
           if (e.team === me?.team) this.showToast('ПОПАЛСЯ!');
+          break;
+        case 'skill':
+          sound.whoosh();
+          if (e.team === me?.team) this.showToast(({ rainbow: 'РАДУГА!', cut: 'ФИНТ!', turn: 'РАЗВОРОТ!' } as Record<string, string>)[e.text ?? ''] ?? 'ФИНТ!');
+          break;
+        case 'volley':
+          this.showToast('С ЛЁТА!');
+          break;
+        case 'bicycle':
+          sound.crowdReact('ooh');
+          this.showToast('ЧЕРЕЗ СЕБЯ!!');
+          break;
+        case 'save':
+          sound.crowdReact('ooh');
+          this.showToast('СЕЙВ!');
           break;
         case 'switch':
           sound.whoosh();
@@ -364,7 +379,7 @@ function showMenu() {
   const render = () => {
     el.innerHTML = `<div class="menu-card bb-card">
       <div class="bb-logo">FOOTBALL<span>BRO</span></div>
-      <div class="bb-tag-line">Желейный футбол · гигантский мяч · подкаты, захваты и полный хаос</div>
+      <div class="bb-tag-line">Угарный футбол · финты, удары через себя, подкаты, захваты и полный хаос</div>
       <button class="btn big bb-play" id="play">ИГРАТЬ</button>
       <div class="options bb-opts">
         <div class="opt"><div class="label">Команды</div>${seg('size', [[3, '3×3'], [4, '4×4'], [5, '5×5']], opts.size)}</div>
@@ -375,9 +390,10 @@ function showMenu() {
       </div>
       <div class="controls bb-controls">
         <div><b>${kl('up')} ${kl('left')} ${kl('down')} ${kl('right')}</b> бег (вперёд — от камеры), <b>${kl('sprint')}</b> спринт</div>
-        <div><b>${kl('kick')}</b> удар — держи, чтобы сильнее</div>
+        <div><b>${kl('kick')}</b> удар — держи, чтобы сильнее; стрелкой целишься в угол (мимо штанги — закрутит); мяч в воздухе — с лёта или через себя</div>
         <div><b>${kl('pass')}</b> пас своему · <b>${kl('lob')}</b> навес</div>
-        <div><b>${kl('tackle')}</b> подкат рыбкой · <b>${kl('grab')}</b> схватить соперника (держи)</div>
+        <div><b>${kl('tackle')}</b> подкат · <b>${kl('grab')}</b> схватить за майку (держи)</div>
+        <div><b>${kl('skill')}</b> финт: вперёд — радуга, вбок — финт с уходом, назад — разворот</div>
         <div><b>${kl('switch')}</b> смена игрока — на того, кто ближе к мячу (жми ещё — следующий)</div>
         <div><b>${kl('jump')}</b> прыжок (по мячу в воздухе — удар головой)</div>
         <div><b>V</b> камера · <b>Esc</b> пауза · <b>M</b> звук</div>

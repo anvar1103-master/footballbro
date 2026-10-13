@@ -68,8 +68,8 @@ export class ChaseCamera {
       const along = rel.dot(f);
       const side = Math.abs(rel.x * -f.z + rel.z * f.x);
       const extra = Math.min(9, Math.max(0, -along) * 0.8 + Math.max(0, side - 6) * 0.35);
-      const back = (this.mode === 0 ? 7.5 : 12) + extra;
-      const up = (this.mode === 0 ? 4.2 : 8.5) + extra * 0.6;
+      const back = (this.mode === 0 ? 6.2 : 11) + extra;
+      const up = (this.mode === 0 ? 3.3 : 7.5) + extra * 0.6;
       const lift = Math.min(3, Math.max(0, ball.y - 3) * 0.4);
       wantPos = target.clone().addScaledVector(f, -back).setY(up + lift);
       // look between the player and the ball

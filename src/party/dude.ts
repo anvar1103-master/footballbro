@@ -82,8 +82,8 @@ function hair(style: number, color: string) {
   const m = mat(color, 0.85);
   const g = new THREE.Group();
   const crop = () => {
-    const c = new THREE.Mesh(new THREE.SphereGeometry(0.158, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.47), m);
-    c.position.set(0, 0.01, -0.01);
+    const c = new THREE.Mesh(new THREE.SphereGeometry(0.158, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.36), m);
+    c.position.set(0, 0.035, -0.012);
     c.castShadow = true;
     g.add(c);
     return c;
@@ -266,17 +266,17 @@ export class DudeActor {
     face.position.y = 0.14;
     this.head.add(face);
     for (const s of [-1, 1]) {
-      const eye = ball(0.036, EYE_W, 12, 10);
+      const eye = ball(0.042, EYE_W, 12, 10);
       eye.scale.set(1, 1.2, 0.6);
-      eye.position.set(s * 0.055, 0.025, 0.133);
-      const pupil = ball(0.02, EYE_B, 10, 8);
-      pupil.position.set(0, 0, 0.03);
+      eye.position.set(s * 0.057, 0.015, 0.13);
+      const pupil = ball(0.022, EYE_B, 10, 8);
+      pupil.position.set(0, 0, 0.034);
       eye.add(pupil);
       face.add(eye);
       this.eyes.push(eye);
       this.pupils.push(pupil);
       const brow = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.014, 0.02), mat(HAIR[Math.floor(rnd(5) * 6)], 0.8));
-      brow.position.set(s * 0.056, 0.078, 0.137);
+      brow.position.set(s * 0.058, 0.08, 0.137);
       face.add(brow);
       this.brows.push(brow);
       const ear = ball(0.032, skinM, 8, 6);
@@ -619,14 +619,14 @@ export class DudeActor {
     // face
     const lx = THREE.MathUtils.clamp(local.x / (Math.abs(local.z) + 1.5), -1, 1);
     const ly = THREE.MathUtils.clamp((local.y - 0.9) / (Math.hypot(local.x, local.z) + 1.5), -1, 1);
-    for (const pu of this.pupils) pu.position.set(lx * 0.016, ly * 0.014, 0.03);
+    for (const pu of this.pupils) pu.position.set(lx * 0.018, ly * 0.016, 0.034);
     this.blinkT -= dt;
     if (this.blinkT < 0) this.blinkT = 2 + Math.random() * 4;
     const blink = this.blinkT < 0.1 || b.state === 'down' ? 0.15 : 1.2;
     for (const e of this.eyes) e.scale.y += (blink - e.scale.y) * Math.min(1, dt * 30);
     this.brows.forEach((br, i) => {
       const s = i === 0 ? 1 : -1;
-      br.position.y = 0.078 + browUp * 0.015;
+      br.position.y = 0.08 + browUp * 0.015;
       br.rotation.z = browUp < 0 ? s * -0.35 : browUp > 0 ? s * 0.15 : 0;
     });
     this.smile.visible = !mouthOpen;

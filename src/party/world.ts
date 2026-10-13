@@ -635,7 +635,7 @@ export class PartyWorld {
             }
           }
         }
-        if (rel < 4.6) continue;
+        if (rel < 5.6) continue;
         if (rel > 9) {
           a.knockDown(1.3);
           b.knockDown(1.3);
