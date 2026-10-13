@@ -9,11 +9,8 @@ root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 chars = os.path.join(root, 'public/assets/characters')
 png = 'data:image/png;base64,' + base64.b64encode(open(os.path.join(chars, 'Textures/colormap.png'), 'rb').read()).decode()
 models = {}
-# Footballbro uses the Mixamo athlete; Soccerbro the Kenney minis
-athlete = title != 'Soccerbro'
-if athlete:
-    models['xbot'] = base64.b64encode(open(os.path.join(root, 'public/assets/athlete/xbot.glb'), 'rb').read()).decode()
-for f in ([] if athlete else sorted(glob.glob(os.path.join(chars, '*.glb')))):
+# Footballbro's beans are built in code; only Soccerbro needs the Kenney minis
+for f in (sorted(glob.glob(os.path.join(chars, '*.glb'))) if title == 'Soccerbro' else []):
     b = open(f, 'rb').read()
     jl = struct.unpack('<I', b[12:16])[0]
     j = json.loads(b[20:20 + jl])

@@ -156,6 +156,15 @@ export class Sound {
     this.noise(0.08, 'lowpass', 600, 0.7, 0.15 + s * 0.2);
   }
 
+  /** springy cartoon "boing" (inflatable walls, countdown) */
+  boing(strength = 5) {
+    if (!this.ctx) return;
+    const s = Math.min(1, strength / 12);
+    const o = this.tone(180 + Math.random() * 40, 0.35, 0.1 + s * 0.18, 'sine');
+    o.frequency.exponentialRampToValueAtTime(520, this.ctx.currentTime + 0.12);
+    o.frequency.exponentialRampToValueAtTime(260, this.ctx.currentTime + 0.33);
+  }
+
   /** quick "hup" for jumps / dives */
   whoosh() {
     if (!this.ctx) return;

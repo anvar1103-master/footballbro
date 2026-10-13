@@ -75,13 +75,13 @@ export class PWorld {
     this.mats = { ground: m('ground'), wall: m('wall'), post: m('post'), net: m('net'), ball: m('ball'), bro: m('bro') };
     const cm = (a: Tag, b: Tag, friction: number, restitution: number) =>
       w.addContactMaterial(new CANNON.ContactMaterial(this.mats[a], this.mats[b], { friction, restitution }));
-    cm('ball', 'ground', 0.5, 0.62);
-    cm('ball', 'wall', 0.2, 0.55);
-    cm('ball', 'post', 0.1, 0.7);
+    cm('ball', 'ground', 0.4, 0.62);
+    cm('ball', 'wall', 0.2, 0.75); // inflatable walls: boing
+    cm('ball', 'post', 0.1, 0.8);
     cm('ball', 'net', 0.9, 0.0);
-    cm('ball', 'bro', 0.3, 0.12); // soft first touch
+    cm('ball', 'bro', 0.3, 0.45); // bouncy beans
     cm('bro', 'ground', 0, 0.05); // feet don't grip: locomotion is impulse-driven (grip would trip them)
-    cm('bro', 'wall', 0.1, 0.2);
+    cm('bro', 'wall', 0.1, 0.6);
     cm('bro', 'bro', 0.2, 0.25);
     cm('bro', 'post', 0.1, 0.2);
     cm('bro', 'net', 0.5, 0.0);
@@ -100,10 +100,26 @@ export class PWorld {
     return this.add(b, 'ground');
   }
 
-  box(tag: Tag, hx: number, hy: number, hz: number, x: number, y: number, z: number) {
+  box(tag: Tag, hx: number, hy: number, hz: number, x: number, y: number, z: number, yaw = 0) {
     const b = new CANNON.Body({ mass: 0, material: this.mats[tag], position: new CANNON.Vec3(x, y, z), collisionFilterGroup: G_WORLD });
     b.addShape(new CANNON.Box(new CANNON.Vec3(hx, hy, hz)));
+    if (yaw) b.quaternion.setFromEuler(0, yaw, 0);
     return this.add(b, tag);
+  }
+
+  setGravity(g: number) {
+    this.w.gravity.set(0, g, 0);
+  }
+
+  /** resize a sphere body (the ball) in place */
+  setSphereRadius(body: PBody, r: number, mass: number) {
+    const s = body.b.shapes[0] as CANNON.Sphere;
+    s.radius = r;
+    s.updateBoundingSphereRadius();
+    body.b.mass = mass;
+    body.b.updateBoundingRadius();
+    body.b.updateMassProperties();
+    body.b.aabbNeedsUpdate = true;
   }
 
   /** cylinder along Y, optionally turned to lie along Z */

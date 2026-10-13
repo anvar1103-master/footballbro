@@ -71,6 +71,15 @@ export class Bro {
   /** where to stand during a dead ball (set by the referee logic) */
   spot: Vector3 | null = null;
   number = 0;
+  /** per-step multipliers set by the world (events, being grabbed…) */
+  speedMul = 1;
+  accelMul = 1;
+  /** the opponent this bean is holding on to (Fall Guys grab) */
+  grabbing: Bro | null = null;
+  grabT = 0;
+  grabCd = 0;
+  /** jumping for joy after a goal */
+  celebrate = false;
 
   constructor(
     world: PWorld,
@@ -158,6 +167,7 @@ export class Bro {
     this.stateT += dt;
     this.jumpCd -= dt;
     this.shoveCd -= dt;
+    this.grabCd -= dt;
     this.dizzy = Math.max(0, this.dizzy - dt);
     if (this.kickT >= 0) {
       this.kickT += dt;
@@ -244,14 +254,14 @@ export class Bro {
     const il = Math.hypot(it.moveX, it.moveZ);
     if (il > 0.15) this.face.set(it.moveX / il, 0, it.moveZ / il);
     const sprinting = it.sprint && this.stamina > 0.05 && il > 0.3;
-    const max = (sprinting ? BRO.sprint : BRO.jog) * (this.kickT >= 0 ? 0.55 : 1) * (this.charging ? 0.75 : 1);
+    const max = (sprinting ? BRO.sprint : BRO.jog) * (this.kickT >= 0 ? 0.55 : 1) * (this.charging ? 0.75 : 1) * this.speedMul;
     if (sprinting) this.stamina = Math.max(0, this.stamina - 0.12 * dt);
     else this.stamina = Math.min(1, this.stamina + 0.07 * dt);
     const wx = (it.moveX / Math.max(1, il)) * max;
     const wz = (it.moveZ / Math.max(1, il)) * max;
     let dvx = wx - v.x, dvz = wz - v.z;
     const dvl = Math.hypot(dvx, dvz);
-    const lim = BRO.accel * dt * (this.grounded ? 1 : BRO.airControl);
+    const lim = BRO.accel * this.accelMul * dt * (this.grounded ? 1 : BRO.airControl);
     if (dvl > lim) {
       dvx = (dvx / dvl) * lim;
       dvz = (dvz / dvl) * lim;
