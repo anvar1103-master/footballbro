@@ -4,7 +4,7 @@ Usage: VITE_ENTRY=index npx vite build --outDir .scratch/single-build && python3
 import base64, glob, json, os, struct, sys
 
 build, out = sys.argv[1], sys.argv[2]
-title = sys.argv[3] if len(sys.argv) > 3 else "Footballbro"
+title = sys.argv[3] if len(sys.argv) > 3 else "Golazo"
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 chars = os.path.join(root, 'public/assets/characters')
 png = 'data:image/png;base64,' + base64.b64encode(open(os.path.join(chars, 'Textures/colormap.png'), 'rb').read()).decode()
@@ -28,8 +28,8 @@ for f in (sorted(glob.glob(os.path.join(chars, '*.glb'))) if title == 'Soccerbro
 js = open(glob.glob(os.path.join(build, 'assets/*.js'))[0]).read().replace('</script', '<\\/script')
 css = open(glob.glob(os.path.join(build, 'assets/*.css'))[0]).read()
 with open(out, 'w') as o:
-    o.write('<meta charset="utf-8">\n<title>' + title + '</title>\n')
-    o.write('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Russo+One&family=Nunito:wght@600;800&display=swap">\n')
+    o.write('<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">\n<title>' + title + '</title>\n')
+    o.write('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Russo+One&family=Nunito:wght@600;800;900&display=swap">\n')
     o.write('<style>:root{color-scheme:dark}' + css + '</style>\n<div id="game"></div><div id="ui"></div>\n')
     o.write('<script>window.__FB_MODELS=' + json.dumps(models) + ';window.__FB_PALETTE=' + json.dumps(png) + ';</script>\n')
     o.write('<script type="module">' + js + '</script>\n')

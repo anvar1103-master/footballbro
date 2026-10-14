@@ -1,7 +1,55 @@
-# Footballbro — project map for Claude
+# Golazo / Footballbro — project map for Claude
 
-## TWO GAMES IN THIS REPO — read first
-- **Footballbro = the CURRENT game: funny arcade football with crash-test-dummy footballers.** `index.html` → `src/party/`.
+## THREE GAMES IN THIS REPO — read first
+- **Golazo = the CURRENT game (since the user said "Footballbro plays badly in every mode — make a football game that can
+  succeed, you are free, use this code as the base, keep improving it").** `index.html` → `src/golazo/`.
+  Genre analysis → the hits on browser portals are free kicks / penalties (Free Kick Classic, Penalty Shooters 2, Kick It)
+  and the mobile hit Score! Hero ("draw the pass", frozen moments as puzzle levels, stars). Golazo = Score!-Hero-style
+  draw-your-goal puzzle with the crash-test dummies: every level is a frozen moment of a match; the player DRAWS a line
+  from the ball (mouse or touch): ends on the goal plane = shot exactly through that point, ends on the grass = pass /
+  lob to that point, bending the line = curl (Magnus). Team-mates make their runs (dashed arrows), defenders try to cut
+  the ball out (a drawn pass shows a red X where it would be intercepted — played out on a clone of the moment), the
+  keeper reads the shot from its initial flight (a curler fools him, long flights give him time) and dives. A team-mate
+  who reaches the ball freezes the moment again (at his feet, or in the air for a volley / header). Goal → points
+  (curl, top corner, volley/header, long range, passes, one-touch) → 1–3 stars; slow-mo + net ripple + replay.
+  Career: 20 levels in 2 chapters (open play, free kicks with a jumping wall, penalties with a guessing keeper, corners,
+  crosses, one-twos, counters), progress in localStorage. Sunset stadium with crowd (Soccerbro's stadium), cloth net.
+  Playable link: (see README) · GitHub Pages: https://anvar1103-master.github.io/footballbro/
+- **Footballbro = the previous game** (`party.html` → `src/party/`), kept playable. Its DudeActor (crash-test dummies)
+  is reused by Golazo through a kinematic puppet adapter.
+
+### Golazo map (src/golazo/)
+```
+sim.ts     — Moment: pure deterministic logic (node-testable). FIELD = fieldFor(11), we attack +x (GOAL_X = 52.5).
+             phases aim → windup → fly → (aim again on a receive | over). Action {type shot|pass|lob, target, curl}.
+             plan(): shots solveThrough (goal-line plane, speed by distance, curl → spin.y = -curl*42), lobs solveLofted
+             (pitch chosen to clear defenders + give the runner time; into the box → head height for a header/volley),
+             ground passes solveGround (firm, weighted to the receiver's ETA). pickReceiver/meetPoint (runs to the drawn
+             target if in time). Defenders: reaction, intercept the earliest reachable path point inside their zone, else
+             close the receiver. Wall: jumps, body-blocks. Keeper: positions on the ball–goal line, reads naive (no spin)
+             early → true later (seen), commits to a dive (ellipse reach), jumps for high balls, claims crosses/through balls
+             in his area; penalties: guesses a side+height point (react 0.04) — corners still beatable. clone() for previews.
+             finish(): bonuses/points/stars. autoLob() when the ground lane is blocked.
+solve.ts   — kick solvers running the real Ball integrator (src/sim/ball.ts): solveThrough (Newton on yaw/pitch,
+             optional crossing plane), solveLofted (Newton on yaw/speed at a fixed pitch), solveGround/groundSpeed/rollTime.
+levels.ts  — LevelDef list (coords [d, z]: d = metres out from the goal line, z across, + = right when facing the goal),
+             mates[0] has the ball, runs[k] = path on the k-th kick, opps (zone/speed/react), wall, gk skill, stars [2★, 3★].
+bot.ts     — brute-force solver (play/shotGrid/passOptions/solve) for tests and balancing (.scratch/solveall.ts).
+render.ts  — GolazoRenderer: sunset sky, lights, Stadium + GoalNet + BallView (BALL_VIS 1.3) from src/render, dummies via
+             PuppetBro (fake Bro for party/dude.ts; keeper dive = roll + lift), preview dots + shadows, goal target ring,
+             danger X, run arrows, holder/receiver rings, grade/vignette pass.
+main.ts    — App: screens title / map / intro / play / result, progress (localStorage golazo.progress.v1), stroke input
+             (pointer events; line starts at the ball; end → ray vs goal plane / grass; bend of the stroke vs its chord → curl),
+             camera director (aim behind the ball, tactical intro, flight chase, slow-mo near goal, side replay),
+             sounds (src/audio/sound.ts), banners/toasts. Debug: ?level=N, ?all (unlock), &q=low|medium|high, &speed=x.
+golazo.css — UI (Russo One + Nunito, navy/pink/gold).
+```
+Tests: `tests/golazo.test.ts` (shot through the drawn point, curl side, firm pass, intercept vs lob, keeper corner/centre,
+wall, cross → header/volley freeze, points, determinism, clone, level sanity, one-touch levels scorable).
+Build the link: `VITE_ENTRY=index npx vite build --outDir .scratch/single-golazo --emptyOutDir && python3 -I scripts/build-single.py .scratch/single-golazo <scratchpad>/golazo/index.html Golazo`.
+
+## Footballbro (previous game) reference
+- **Footballbro: funny arcade football with crash-test-dummy footballers.** `party.html` → `src/party/`.
   Procedural dummies (yellow plastic, ball joints, bolts, target stickers, faces, detailed kits — no assets) on wobbly
   physics bodies, you control one player in a 3/4/5-a-side team incl. keeper vs AI, normal-size ball at the feet, skill
   moves, aimed + curled shots, volleys, bicycle kicks, headers, slide tackles, shirt grabs, chaos events, ОГОНЬ fire
@@ -103,7 +151,7 @@ Tests: `tests/party.test.ts` (balance, ball drop, get-up, kick, pass arrives, lo
 switching, curled shot goes in, skills, bicycle kick, keeper catch, goal → kick-off, chaos on/off, keyboard assist on
 target, pass preview + combo fills ОГОНЬ, fire shot burns through, fast ball not captured, tutorial playthrough, full AI match). Headless: step `PartyWorld` directly (4v4 ≈ 25× realtime).
 Debug: `?autostart`, `?watch`, `?tutorial`, `&size=3|4|5`, `&len=<s>`, `&speed=<x>`, `&q=low|medium|high`; `window.__fb` = session.
-Build the link: `VITE_ENTRY=index npx vite build --outDir .scratch/single-party --emptyOutDir && python3 -I scripts/build-single.py .scratch/single-party <scratchpad>/party/index.html Footballbro`, then Artifact publish with url above.
+Build the link: `VITE_ENTRY=party npx vite build --outDir .scratch/single-party --emptyOutDir && python3 -I scripts/build-single.py .scratch/single-party <scratchpad>/party/index.html Footballbro`, then Artifact publish with url above.
 Soccerbro link build: same with `VITE_ENTRY=classic` and title `Soccerbro` (embeds the Kenney GLBs).
 
 ---
