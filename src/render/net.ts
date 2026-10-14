@@ -174,7 +174,7 @@ export class GoalNet {
           float lineA = max(a.x, a.y);
           // far away the cells are sub-pixel: fade to a soft veil instead of shimmering
           float veil = clamp(max(fw.x, fw.y) * 2.5, 0.0, 1.0);
-          diffuseColor.a = mix(lineA, 0.38, veil) * 0.95;
+          diffuseColor.a = mix(lineA, 0.38, veil) * 0.95 * opacity;
           if (diffuseColor.a < 0.02) discard;`,
         );
     };

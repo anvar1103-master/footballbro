@@ -131,7 +131,22 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #120a2e; col
 .gz-toast.show { transform: translate(-50%, 0) scale(1) rotate(2deg); opacity: 1; }
 
 @media (max-width: 600px) {
-  .gz-hint { font-size: 13px; bottom: 12px; }
+  .gz-hint { font-size: 13px; bottom: 12px; white-space: normal; text-align: center; border-radius: 16px; width: max-content; max-width: calc(100vw - 24px); }
+  .gz-cam, .gz-lob { bottom: 84px; }
   .gz-badge { font-size: 14px; }
   .gz-icon { width: 42px; height: 42px; font-size: 20px; }
 }
+
+/* ---- penalty shoot-out ---- */
+.gz-so-pick { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.gz-so-pick span { flex-basis: 100%; text-align: center; font-family: var(--gz-title); font-size: 15px; letter-spacing: 1px; text-transform: uppercase; color: var(--gz-cyan); }
+.gz-so-pick .gz-btn { font-size: 15px; padding: 8px 14px; }
+.gz-so { display: inline-flex; flex-direction: column; gap: 5px; background: rgba(18,10,46,0.75); border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 16px; padding: 7px 12px; }
+.gz-so > div { display: flex; align-items: center; gap: 6px; }
+.gz-so .kit { font-style: normal; font-family: var(--gz-title); font-size: 12px; border-radius: 6px; padding: 1px 6px; min-width: 40px; text-align: center;
+  border: 1px solid rgba(255,255,255,0.6); }
+.gz-so b { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.45); display: inline-block; }
+.gz-so b.g { background: #3ee07a; border-color: #fff; }
+.gz-so b.x { background: #ff4d6d; border-color: #fff; }
+.gz-result .gz-so { margin: 8px auto; }

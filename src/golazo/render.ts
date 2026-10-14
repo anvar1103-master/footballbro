@@ -156,6 +156,8 @@ export class GolazoRenderer {
   private danger: THREE.Sprite;
   private m4 = new THREE.Matrix4();
   shake = 0;
+  /** goal net opacity multiplier (the keeper's view looks through it) */
+  netFade = 1;
 
   constructor(public container: HTMLElement, teams: TeamInfo[], public quality: Quality = 'high') {
     const low = quality === 'low';
@@ -173,6 +175,8 @@ export class GolazoRenderer {
 
     this.camera = new THREE.PerspectiveCamera(44, container.clientWidth / container.clientHeight, 0.1, 1500);
     this.camera.position.set(20, 6, 0);
+    this.camera.fov = this.baseFov();
+    this.camera.updateProjectionMatrix();
 
     const sunDir = new THREE.Vector3(-60, 22, -70);
     this.scene.add(makeSunsetSky(sunDir));
@@ -279,7 +283,16 @@ export class GolazoRenderer {
     this.renderer.setSize(w, h);
     this.composer?.setSize(w, h);
     this.camera.aspect = w / h;
+    this.camera.fov = this.baseFov();
     this.camera.updateProjectionMatrix();
+  }
+
+  /** narrow (portrait phone) screens get a wider lens so the team-mates stay in view */
+  get portrait() {
+    return this.camera.aspect < 0.85;
+  }
+  baseFov() {
+    return this.camera.aspect < 0.85 ? 64 : this.camera.aspect < 1.2 ? 52 : 44;
   }
 
   /** (Re)build the dummies for a new level. */
@@ -364,6 +377,7 @@ export class GolazoRenderer {
         break;
       }
       this.goalTarget.position.set(GOAL_X + 0.02, c.y, c.z);
+      this.goalTarget.scale.setScalar(1);
       this.goalTarget.visible = Math.abs(c.z) < HW + 3 && c.y < GH + 3;
       this.target.visible = false;
     } else {
@@ -374,6 +388,13 @@ export class GolazoRenderer {
     this.receiverRing.visible = !!receiver && !danger;
     if (danger) this.target.visible = false;
     if (receiver) this.receiverRing.position.set(receiver.pos.x, 0.035, receiver.pos.z);
+  }
+
+  /** a ring on the goal (the keeper's dive spot in a shoot-out) */
+  markGoal(p: THREE.Vector3 | null) {
+    this.goalTarget.visible = !!p;
+    if (p) this.goalTarget.position.set(GOAL_X - 0.05, p.y, p.z);
+    this.goalTarget.scale.setScalar(p ? 0.75 : 1);
   }
 
   /** Draw one frame. `views` = actor states (live or replay). */
@@ -387,6 +408,8 @@ export class GolazoRenderer {
     }
     this.ball.update(ball.pos, ball.vel, ball.spin, dt, this.camera);
     this.net.update(dt, this.ball.mesh.position, this.time);
+    const nm = this.net.mesh.material as THREE.MeshStandardMaterial;
+    nm.opacity += (this.netFade - nm.opacity) * Math.min(1, dt * 6);
     this.particles.update(dt);
     this.stadium.update(dt, this.time);
     this.holderRing.visible = !!holder;

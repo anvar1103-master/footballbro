@@ -39,7 +39,7 @@ export function passOptions(m: Moment): Action[] {
     const refs = [a.pos.clone()];
     if (run && run.length) refs.push(run[run.length - 1].clone());
     for (const r of refs)
-      for (const [dx, dz] of [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2], [3.5, 0]])
+      for (const [dx, dz] of [[0, 0], [2.5, 0], [0, 2], [0, -2]])
         for (const type of ['pass', 'lob'] as const) out.push({ type, target: new Vector3(r.x + dx, 0, r.z + dz), curl: 0 });
   }
   return out;
@@ -49,12 +49,29 @@ export interface SolveReport {
   solved: boolean;
   best: number;
   bestSeq: Action[];
-  /** share of grid shots that score from the best shooting position */
+  /** share of grid shots (3 seeds) that score from the best shooting position */
   shotRate: number;
   tried: number;
 }
 
-export function solve(level: LevelDef, maxDepth = 3, fine = false): SolveReport {
+/** pass / lob targets on a grid ahead of the ball (plus each team-mate's position and run end) */
+export function passGrid(m: Moment): Action[] {
+  const out: Action[] = [];
+  const b = m.ball.pos;
+  for (let d = 3; d <= 42; d += 3)
+    for (let z = -24; z <= 24; z += 3) {
+      const x = GOAL_X - d;
+      if (x < b.x - 8) continue;
+      for (const type of ['pass', 'lob'] as const) out.push({ type, target: new Vector3(x, 0, z), curl: 0 });
+    }
+  return [...out, ...passOptions(m)];
+}
+
+/**
+ * Search: from each frozen moment take the 3 best receptions (closest to goal, distinct receiver/touch),
+ * up to `maxDepth` touches, and finish with the shot grid.
+ */
+export function solve(level: LevelDef, maxDepth = 3): SolveReport {
   let best = -1;
   let bestSeq: Action[] = [];
   let bestRate = 0;
@@ -63,24 +80,37 @@ export function solve(level: LevelDef, maxDepth = 3, fine = false): SolveReport 
     const m = play(level, seq);
     if (m.phase !== 'aim') return;
     let goals = 0;
-    const shots = shotGrid(fine);
+    const shots = shotGrid();
     for (const s of shots) {
-      const r = play(level, [...seq, s]);
-      tried++;
-      for (let seed = 2; seed <= 3; seed++) if (play(level, [...seq, s], seed).result?.ok) goals += 0.5;
-      if (r.result?.ok) {
-        if (r.result.points > best) {
+      for (let seed = 1; seed <= 3; seed++) {
+        const r = play(level, [...seq, s], seed);
+        tried++;
+        if (!r.result?.ok) continue;
+        goals++;
+        if (seed === 1 && r.result.points > best) {
           best = r.result.points;
           bestSeq = [...seq, s];
         }
       }
     }
-    bestRate = Math.max(bestRate, goals / shots.length / 1);
+    bestRate = Math.max(bestRate, goals / shots.length / 3);
     if (depth >= maxDepth) return;
-    for (const p of passOptions(m)) {
+    const ok: { p: Action; score: number; key: string }[] = [];
+    for (const p of passGrid(m)) {
       const r = play(level, [...seq, p]);
       tried++;
-      if (r.phase === 'aim') visit([...seq, p], depth + 1);
+      if (r.phase !== 'aim' || !r.holder) continue;
+      const b = r.ball.pos;
+      ok.push({ p, score: -Math.hypot(GOAL_X - b.x, b.z * 0.8) + (r.touch !== 'feet' ? 4 : 0), key: `${r.holder.id}:${r.touch}` });
+    }
+    ok.sort((a, b) => b.score - a.score);
+    const seen = new Set<string>();
+    let n = 0;
+    for (const o of ok) {
+      if (seen.has(o.key) || n >= 3) continue;
+      seen.add(o.key);
+      n++;
+      visit([...seq, o.p], depth + 1);
     }
   };
   visit([], 1);

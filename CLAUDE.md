@@ -13,7 +13,10 @@
   who reaches the ball freezes the moment again (at his feet, or in the air for a volley / header). Goal → points
   (curl, top corner, volley/header, long range, passes, one-touch) → 1–3 stars; slow-mo + net ripple + replay.
   Career: 20 levels in 2 chapters (open play, free kicks with a jumping wall, penalties with a guessing keeper, corners,
-  crosses, one-twos, counters), progress in localStorage. Sunset stadium with crowd (Soccerbro's stadium), cloth net.
+  crosses, one-twos, counters), progress in localStorage. Quick mode «Серия пенальти» (3 difficulties, Penalty Shooters
+  style): alternate kicks vs an AI team, 5 each then sudden death; on their kick YOU keep goal — draw a line to where
+  to dive during the run-up (camera inside the goal behind the keeper, net faded). A ground pass that the preview shows
+  intercepted is turned into a lob automatically when the lob gets through (smartPass). Sunset stadium with crowd (Soccerbro's stadium), cloth net.
   Playable link: (see README) · GitHub Pages: https://anvar1103-master.github.io/footballbro/
 - **Footballbro = the previous game** (`party.html` → `src/party/`), kept playable. Its DudeActor (crash-test dummies)
   is reused by Golazo through a kinematic puppet adapter.
@@ -38,13 +41,16 @@ bot.ts     — brute-force solver (play/shotGrid/passOptions/solve) for tests an
 render.ts  — GolazoRenderer: sunset sky, lights, Stadium + GoalNet + BallView (BALL_VIS 1.3) from src/render, dummies via
              PuppetBro (fake Bro for party/dude.ts; keeper dive = roll + lift), preview dots + shadows, goal target ring,
              danger X, run arrows, holder/receiver rings, grade/vignette pass.
-main.ts    — App: screens title / map / intro / play / result, progress (localStorage golazo.progress.v1), stroke input
+main.ts    — App: screens title / map / intro / play / result, shoot-out (Shootout state: us/them results, turn, keeper
+             {run-up timer, AI shot, user's dive point → Moment.userKeeper/userGuess}, soWinner, dots HUD), progress (localStorage golazo.progress.v1), stroke input
              (pointer events; line starts at the ball; end → ray vs goal plane / grass; bend of the stroke vs its chord → curl),
              camera director (aim behind the ball, tactical intro, flight chase, slow-mo near goal, side replay),
              sounds (src/audio/sound.ts), banners/toasts. Debug: ?level=N, ?all (unlock), &q=low|medium|high, &speed=x.
 golazo.css — UI (Russo One + Nunito, navy/pink/gold).
 ```
-Tests: `tests/golazo.test.ts` (shot through the drawn point, curl side, firm pass, intercept vs lob, keeper corner/centre,
+Balancing: `.scratch/solveall.ts` (bot.solve: pass grid search + shot grid, 3 seeds) — all 20 levels solved, finishes
+after a good set-up score 45–90 %, long shots ~10 %, penalties ~80 %.
+Tests: `tests/golazo.test.ts` (shoot-out keeper dive right/wrong/stand, shot through the drawn point, curl side, firm pass, intercept vs lob, keeper corner/centre,
 wall, cross → header/volley freeze, points, determinism, clone, level sanity, one-touch levels scorable).
 Build the link: `VITE_ENTRY=index npx vite build --outDir .scratch/single-golazo --emptyOutDir && python3 -I scripts/build-single.py .scratch/single-golazo <scratchpad>/golazo/index.html Golazo`.
 

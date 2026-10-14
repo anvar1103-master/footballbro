@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Vector3 } from 'three';
+import { Vector2, Vector3 } from 'three';
 import { LEVELS, LevelDef } from '../src/golazo/levels';
 import { Action, GOAL_X, HW, Moment } from '../src/golazo/sim';
 import { play, shotGrid } from '../src/golazo/bot';
@@ -142,3 +142,30 @@ Moment.prototype.also = function (fn) {
   fn(this);
   return this;
 };
+
+describe('golazo shoot-out keeper', () => {
+  const pen = lvl({ kind: 'penalty', mates: [{ at: [11, 0] }], gk: 0.5 });
+  it('the player-keeper saves when he dives to the right spot and is beaten when he goes the wrong way', () => {
+    const shotAt = shot(2.4, 0.6);
+    const right = new Moment(pen, 1);
+    right.userKeeper = true;
+    right.userGuess = new Vector2(2.3, 0.7);
+    right.act(shotAt);
+    expect(runOut(right).result?.ok).toBe(false);
+    const wrong = new Moment(pen, 1);
+    wrong.userKeeper = true;
+    wrong.userGuess = new Vector2(-2.3, 0.7);
+    wrong.act(shotAt);
+    expect(runOut(wrong).result?.ok).toBe(true);
+  });
+  it('a keeper who does not dive stands still (a ball at him is still saved)', () => {
+    const m = new Moment(pen, 1);
+    m.userKeeper = true;
+    m.act(shot(2.6, 0.5));
+    expect(runOut(m).result?.ok).toBe(true);
+    const c = new Moment(pen, 1);
+    c.userKeeper = true;
+    c.act(shot(0.1, 1.0));
+    expect(runOut(c).result?.ok).toBe(false);
+  });
+});
