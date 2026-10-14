@@ -4,7 +4,7 @@ import type { FieldDims } from '../sim/config';
 import { Rng } from '../sim/rng';
 import { TEAM_PRESETS, TeamInfo } from '../sim/team';
 import { Bro, BRO } from './bro';
-import { think } from './brain';
+import { receivePoint, think } from './brain';
 
 /**
  * Footballbro "Bean Ball": wobbly physics beans (cannon-es) knocking a big bouncy ball around a
@@ -66,7 +66,9 @@ export interface PartyInput {
 }
 export const NO_INPUT: PartyInput = { mx: 0, mz: 0, sprint: false, jump: false, kick: false, pass: false, lob: false, tackle: false, grab: false, switch: false, skill: false, aimX: 0, aimZ: 0 };
 /** indoor hall: walls go up to the roof, so the ball never leaves */
-export const HALL_H = 9;
+export const HALL_H = 12;
+/** the ball hovers / is dropped from this height at kick-offs (in view of the TV camera) */
+export const DROP_H = 6;
 
 export type EventKind = 'mega' | 'lowgrav' | 'ice' | 'turbo' | 'sweeper';
 export const EVENT_INFO: Record<EventKind, { title: string; sub: string }> = {
@@ -78,7 +80,13 @@ export const EVENT_INFO: Record<EventKind, { title: string; sub: string }> = {
 };
 
 export interface PartyEvent {
-  type: 'switch' | 'skill' | 'save' | 'catch' | 'volley' | 'bicycle' | 'kick' | 'bounce' | 'post' | 'net' | 'wall' | 'goal' | 'bonk' | 'whistle' | 'tackle' | 'grab' | 'header' | 'event' | 'eventEnd' | 'countdown' | 'drop' | 'golden' | 'over';
+  type:
+    | 'switch' | 'skill' | 'save' | 'catch' | 'volley' | 'bicycle' | 'kick' | 'bounce' | 'post' | 'net' | 'wall' | 'goal' | 'bonk' | 'whistle'
+    | 'tackle' | 'grab' | 'header' | 'event' | 'eventEnd' | 'countdown' | 'drop' | 'golden' | 'over'
+    /** a pass reached a team-mate (strength = passes in a row) */
+    | 'combo'
+    /** a team's ОГОНЬ meter is full / a fire shot was struck / it burnt through someone */
+    | 'fireReady' | 'fire' | 'burn';
   pos?: Vector3;
   strength?: number;
   team?: number;
@@ -91,6 +99,10 @@ export interface Team {
   score: number;
   /** +1 attacks the goal at +x */
   dir: number;
+  /** ОГОНЬ meter 0..1: passes, skills, tackles and saves fill it; full = the next shot is a fire shot */
+  fire: number;
+  /** completed passes in a row */
+  combo: number;
 }
 
 export interface WorldOpts {
@@ -157,14 +169,23 @@ export class PartyWorld {
   private lastCount = 4;
   /** the human's last stick direction (world), used to aim headers */
   lastAim = new Vector3();
+  /** the team-mate a pass by the human would go to right now (HUD highlight) */
+  passTarget: Bro | null = null;
+  /** a fire shot in flight: burns through anyone in its way */
+  fireBall: { team: number; t: number; shooter: Bro } | null = null;
+  /** who played the last pass (to count completed passes) */
+  private lastPasser: Bro | null = null;
+  private preVel = new Vector3();
+  /** scripted players (tutorial): called instead of the AI */
+  scripted = new Map<Bro, (b: Bro, dt: number) => void>();
 
   constructor(public opts: WorldOpts) {
     this.rng = new Rng(opts.seed ?? (Date.now() & 0xffff));
     this.humanTeam = opts.humanTeam;
     const infos = opts.teams ?? [TEAM_PRESETS[0], TEAM_PRESETS[1]];
     this.teams = [
-      { index: 0, info: infos[0], score: 0, dir: 1 },
-      { index: 1, info: infos[1], score: 0, dir: -1 },
+      { index: 0, info: infos[0], score: 0, dir: 1, fire: 0, combo: 0 },
+      { index: 1, info: infos[1], score: 0, dir: -1, fire: 0, combo: 0 },
     ];
   }
 
@@ -210,7 +231,7 @@ export class PartyWorld {
       W.box('net', dd / 2, 0.4, f.goalHalfW + 0.6, x0 + dir * (dd / 2), f.goalH + 0.15 + 0.4, 0);
     }
     this.ball = W.ball(BALL_P.radius, BALL_P.mass, 0.0, 0.05);
-    this.ball.setTranslation({ x: 0, y: 9, z: 0 });
+    this.ball.setTranslation({ x: 0, y: DROP_H, z: 0 });
     W.onBallHit = (tag: Tag, sp: number, other) => {
       if (tag === 'net' && sp > 3 && this.cds.net <= 0) {
         this.cds.net = 0.4;
@@ -301,21 +322,39 @@ export class PartyWorld {
     this.holder = null;
     this.buffer = null;
     this.gkHold = null;
+    this.endFire();
     for (const b of this.bros) {
       const s = this.spotFor(b);
       b.teleport(s.x, s.z, this.teams[b.team].dir);
       b.grabbing = null;
       b.celebrate = false;
     }
-    this.ball.setTranslation({ x: 0, y: 9, z: 0 });
+    this.ball.setTranslation({ x: 0, y: DROP_H, z: 0 });
     this.ball.setLinvel({ x: 0, y: 0, z: 0 });
     this.ball.setAngvel({ x: 0, y: 2, z: 0 });
+  }
+
+  /** straight into play without the countdown / ball drop (tutorial drills place the ball themselves) */
+  skipCountdown() {
+    this.phase = 'play';
+    this.phaseT = 0;
+  }
+
+  /** put the ball somewhere, dead still */
+  placeBall(x: number, z: number, y = BALL_P.radius) {
+    this.ball.setTranslation({ x, y: Math.max(this.ballR, y), z });
+    this.ball.setLinvel({ x: 0, y: 0, z: 0 });
+    this.ball.setAngvel({ x: 0, y: 0, z: 0 });
+    this.holder = null;
+    this.gkHold = null;
+    this.buffer = null;
+    this.endFire();
   }
 
   private dropBall() {
     this.phase = 'play';
     this.phaseT = 0;
-    this.ball.setTranslation({ x: 0, y: 9, z: 0 });
+    this.ball.setTranslation({ x: 0, y: DROP_H, z: 0 });
     this.ball.setLinvel({ x: this.rng.range(-1.2, 1.2), y: -2, z: this.rng.range(-1.2, 1.2) });
     this.ball.setAngvel({ x: this.rng.range(-3, 3), y: 3, z: this.rng.range(-3, 3) });
     this.emit({ type: 'drop', pos: this.ballPos() });
@@ -342,7 +381,7 @@ export class PartyWorld {
         b.intent = { moveX: (s.x - p.x) * 0.8, moveZ: (s.z - p.z) * 0.8, sprint: false, jump: false, dive: false };
         b.face.set(this.teams[b.team].dir, 0, 0);
       }
-      this.ball.setTranslation({ x: 0, y: 9 + Math.sin(this.phaseT * 3) * 0.2, z: 0 });
+      this.ball.setTranslation({ x: 0, y: DROP_H + Math.sin(this.phaseT * 3) * 0.2, z: 0 });
       this.ball.setLinvel({ x: 0, y: 0, z: 0 });
       if (this.phaseT >= 2.4) this.dropBall();
     } else if (this.phase === 'play') {
@@ -354,6 +393,8 @@ export class PartyWorld {
         } else this.finish();
       }
       this.updateChaos(dt);
+      // the ОГОНЬ meters creep up on their own too
+      for (const t of this.teams) this.addFire(t.index, 0.003 * dt);
     } else if (this.phase === 'goal') {
       if (this.phaseT > 3.6) {
         if (this.golden) this.finish();
@@ -364,7 +405,13 @@ export class PartyWorld {
     // --- control: human first (once per step), then the AI ---
     const humanOk = this.controlled && this.phase !== 'countdown' && this.phase !== 'over';
     if (humanOk) this.human(this.controlled!, input, dt);
-    if (this.phase !== 'countdown') for (const b of this.bros) if (b !== this.controlled || !humanOk) think(this, b, dt);
+    if (this.phase !== 'countdown')
+      for (const b of this.bros) {
+        if (b === this.controlled && humanOk) continue;
+        const sc = this.scripted.get(b);
+        if (sc) sc(b, dt);
+        else think(this, b, dt);
+      }
     this.prevInput = { ...input };
 
     this.updateGrabs(dt);
@@ -375,13 +422,52 @@ export class PartyWorld {
     this.switchTarget = this.pickSwitch();
     if (this.sweeper.on) this.updateSweeper(dt);
     this.pendingHits.length = 0;
+    this.ballVel(this.preVel);
     this.world.step(dt);
     this.afterHits();
     this.keepInside();
     this.keeperCatch(dt);
     this.bodyCollisions();
     this.ballEvents();
+    if (this.fireBall) this.updateFire(dt);
     if (this.phase === 'play') this.checkBall();
+  }
+
+  // ---------------- ОГОНЬ meter + fire shots ----------------
+  /** a fire shot flies through the players (ghost ball) and blows away everyone it passes */
+  private updateFire(dt: number) {
+    const fb = this.fireBall!;
+    fb.t += dt;
+    if (fb.t > 3 || (fb.t > 0.3 && this.ballVel().length() < 11)) {
+      this.endFire();
+      return;
+    }
+    const bp = this.ballPos();
+    const v = this.ballVel();
+    for (const b of this.bros) {
+      if (b.state === 'down' || (b === fb.shooter && fb.t < 0.3) || (b.role === 'GK' && b.team !== fb.team)) continue;
+      const p = b.position();
+      if (Math.hypot(bp.x - p.x, bp.z - p.z) < BRO.radius + this.ballR + 0.12 && bp.y < p.y + BRO.halfHeight + BRO.radius + 0.1) {
+        b.knockDown(1.8, v.clone().setY(0).normalize().multiplyScalar(170).setY(140));
+        this.ball.setLinvel({ x: v.x * 0.92, y: v.y, z: v.z * 0.92 });
+        this.emit({ type: 'burn', pos: p, team: fb.team, strength: 14 });
+      }
+    }
+  }
+  endFire() {
+    if (!this.fireBall) return;
+    this.fireBall = null;
+    this.world.ballGhost(this.ball, false);
+  }
+
+  // ---------------- ОГОНЬ meter ----------------
+  addFire(team: number, amount: number) {
+    const t = this.teams[team];
+    if (t.fire >= 1 || this.phase !== 'play') return;
+    // the AI fills it a bit slower on the easier levels
+    const mul = team === this.humanTeam ? 1 : { easy: 0.55, normal: 0.85, hard: 1 }[this.opts.difficulty ?? 'normal'];
+    t.fire = Math.min(1, t.fire + amount * mul);
+    if (t.fire >= 1) this.emit({ type: 'fireReady', team });
   }
 
   private finish() {
@@ -518,7 +604,7 @@ export class PartyWorld {
    */
   private dribbleAssist(dt: number) {
     const bp = this.ballPos();
-    if (bp.y > this.ballR + 0.45 || this.gkHold) {
+    if (bp.y > this.ballR + 0.45 || this.gkHold || this.fireBall) {
       if (!this.gkHold) this.holder = null;
       return;
     }
@@ -535,6 +621,9 @@ export class PartyWorld {
       const d = Math.hypot(dx, dz);
       const front = (dx * b.face.x + dz * b.face.z) / (d || 1);
       const mine = b === this.holder;
+      // a shot flying past can't be stopped dead by a foot: it only deflects off the body
+      const bvx = bv.x - b.velocity().x, bvz = bv.z - b.velocity().z;
+      if (!mine && bvx * bvx + bvz * bvz > 15 * 15) continue;
       if (d < reachBase + (mine ? 1.0 : 0.55) && front > (mine ? -0.3 : 0.25)) {
         const score = d - (mine ? 0.45 : 0);
         if (score < bd) {
@@ -543,7 +632,10 @@ export class PartyWorld {
         }
       }
     }
-    if (best !== this.holder && best) this.emit({ type: 'kick', pos: bp, strength: 2, team: best.team });
+    if (best !== this.holder && best) {
+      this.emit({ type: 'kick', pos: bp, strength: 2, team: best.team });
+      this.gotBall(best);
+    }
     this.holder = best;
     if (!best) return;
     const p = best.position();
@@ -559,6 +651,19 @@ export class PartyWorld {
     const blend = Math.min(1, dt * (sprint ? 9 : human ? 16 : 12));
     this.ball.applyImpulse({ x: (wantX - bv.x) * m * blend, y: 0, z: (wantZ - bv.z) * m * blend }, true);
     this.lastTouch = best;
+  }
+
+  /** someone took control of the ball: completed passes fill the meter, the other team's chain breaks */
+  private gotBall(b: Bro) {
+    const lp = this.lastPasser;
+    const t = this.teams[b.team];
+    this.teams[1 - b.team].combo = 0;
+    if (lp && lp.team === b.team && lp !== b) {
+      t.combo++;
+      this.addFire(b.team, 0.06 + 0.015 * Math.min(4, t.combo));
+      this.emit({ type: 'combo', team: b.team, strength: t.combo, pos: b.position() });
+    } else if (!lp || lp.team !== b.team) t.combo = 0;
+    this.lastPasser = null;
   }
 
   /** after the physics step: headers and beans flattened by a fast ball */
@@ -594,7 +699,7 @@ export class PartyWorld {
     const p = this.ballPos();
     // escaped the arena (over the walls): drop a new one from the sky
     if (Math.abs(p.x) > ARENA.length / 2 + ARENA.goalDepthBottom + 3 || Math.abs(p.z) > ARENA.width / 2 + 2 || !Number.isFinite(p.x)) {
-      this.ball.setTranslation({ x: 0, y: 9, z: 0 });
+      this.ball.setTranslation({ x: 0, y: DROP_H, z: 0 });
       this.ball.setLinvel({ x: 0, y: -2, z: 0 });
       this.emit({ type: 'drop', pos: this.ballPos() });
     }
@@ -614,6 +719,12 @@ export class PartyWorld {
       this.slowmo = 1.2;
       this.holder = null;
       this.endChaos();
+      this.endFire();
+      for (const t of this.teams) t.combo = 0;
+      // comeback help: the team that conceded gets a good chunk of ОГОНЬ
+      const was = this.teams[scoredOn].fire;
+      this.teams[scoredOn].fire = Math.min(1, was + 0.25);
+      if (was < 1 && this.teams[scoredOn].fire >= 1) this.emit({ type: 'fireReady', team: scoredOn });
       this.emit({ type: 'goal', team, pos: p });
       this.emit({ type: 'whistle', strength: 2 });
       for (const b of this.teamBros(team)) b.celebrate = true;
@@ -709,8 +820,11 @@ export class PartyWorld {
           for (const [diver, victim, s] of [[a, b, 1], [b, a, -1]] as const) {
             if (diver.state === 'dive' && victim.state === 'up' && Math.abs(rel) > 1.5) {
               victim.knockDown(1.3, n.clone().multiplyScalar(s * 110).setY(70));
-              this.emit({ type: 'tackle', pos: pa.clone().lerp(pb, 0.5), strength: 9 });
-              if (this.holder === victim) this.holder = null;
+              this.emit({ type: 'tackle', pos: pa.clone().lerp(pb, 0.5), strength: 9, team: diver.team });
+              if (this.holder === victim) {
+                this.holder = null;
+                this.addFire(diver.team, 0.08);
+              }
               return;
             }
           }
@@ -828,8 +942,11 @@ export class PartyWorld {
     const h = Math.hypot(vel.x, vel.z) || 1;
     if (roll) this.ball.setAngvel({ x: (vel.z / h) * (h / this.ballR), y: 0, z: (-vel.x / h) * (h / this.ballR) }, true);
     else this.ball.setAngvel({ x: spin.x, y: spin.y, z: spin.z }, true);
+    // a first-time ball off a team-mate's pass counts as a completed pass too
+    if (this.holder !== b) this.gotBall(b);
     this.holder = null;
     this.lastTouch = b;
+    this.lastPasser = kind === 'pass' || kind === 'lob' ? b : null;
     const kindEvent = kind === 'volley' || kind === 'bicycle' ? kind : 'kick';
     this.emit({ type: kindEvent, pos: bp, strength: Math.hypot(vel.x, vel.y, vel.z), team: b.team });
     if (kindEvent !== 'kick') this.emit({ type: 'kick', pos: bp, strength: Math.hypot(vel.x, vel.y, vel.z), team: b.team });
@@ -845,7 +962,10 @@ export class PartyWorld {
     const gx = this.goalX(b.team);
     let dir = aim.clone().setY(0).normalize();
     if (dir.lengthSq() < 0.5) dir = b.face.clone();
-    const speed = 20 + power * 14;
+    // a full ОГОНЬ meter turns any shot into a fire shot: a low rocket that burns through everyone
+    const fire = this.teams[b.team].fire >= 1 && kind !== 'header';
+    if (fire) power = Math.max(power, 0.6);
+    const speed = fire ? 33 + power * 6 : 20 + power * 14;
     let curl = 0;
     let dist = 20;
     const lim = ARENA.goalHalfW - 0.4;
@@ -871,16 +991,65 @@ export class PartyWorld {
       }
     }
     // clumsiness grows with power
-    dir.applyAxisAngle(new Vector3(0, 1, 0), this.rng.gauss() * (0.008 + 0.02 * power * power));
+    dir.applyAxisAngle(new Vector3(0, 1, 0), this.rng.gauss() * (fire ? 0.004 : 0.008 + 0.02 * power * power));
     // height: crosses the line between knee and bar height, higher when blasted
     const t = Math.max(0.15, dist / speed);
     const g = -this.gravity;
-    const wantH = 0.35 + power * 1.0 + this.rng.gauss() * 0.2 * power * power;
+    const wantH = fire ? 0.5 + power * 0.7 : 0.35 + power * 1.0 + this.rng.gauss() * 0.2 * power * power;
     const vy = Math.max(0.5, (wantH - bp.y + 0.5 * g * t * t) / t);
     const v = dir.multiplyScalar(speed).setY(vy);
     const h = Math.hypot(v.x, v.z);
     const top = new Vector3((v.z / h) * 6, curl, (-v.x / h) * 6);
-    return this.strike(b, v, kind, top);
+    const ok = this.strike(b, v, kind, top);
+    if (ok && fire) {
+      this.teams[b.team].fire = 0;
+      this.fireBall = { team: b.team, t: 0, shooter: b };
+      this.world.ballGhost(this.ball, true);
+      this.slowmo = Math.max(this.slowmo, 0.3);
+      this.emit({ type: 'fire', pos: bp, team: b.team, strength: speed });
+    }
+    return ok;
+  }
+
+  /** human shot without the mouse: anything roughly towards the goal goes at a corner of it */
+  assistAim(b: Bro, aim: Vector3) {
+    const bp = this.ballPos();
+    const gx = this.goalX(b.team);
+    const toGoal = new Vector3(gx - bp.x, 0, -bp.z);
+    const dist = toGoal.length();
+    toGoal.normalize();
+    const a = aim.clone().setY(0).normalize();
+    if (dist > 34 || a.dot(toGoal) < 0.34 || Math.sign(a.x) !== Math.sign(gx - bp.x)) return aim;
+    const lim = ARENA.goalHalfW - 0.5;
+    const zHit = bp.z + (a.z * (gx - bp.x)) / a.x;
+    let zc: number;
+    if (Math.abs(zHit) < 0.9) {
+      // straight at the middle: pick the corner away from the keeper
+      const gk = this.teamBros(1 - b.team).find((q) => q.role === 'GK');
+      const gz = gk ? gk.position().z : 0;
+      zc = -(Math.sign(gz - bp.z * 0.15) || 1) * lim * 0.9;
+    } else if (Math.abs(zHit) < lim + 6) return aim; // in the frame, or just wide: shootAt curls it in
+    else zc = Math.sign(zHit) * (lim + 2.5); // way off: a curler round the near post
+    return new Vector3(gx - bp.x, 0, zc - bp.z).normalize();
+  }
+
+  /** jump and nod a high ball towards `aim` (the goal when roughly aimed at it) */
+  headAt(b: Bro, aim: Vector3) {
+    if (!this.inReach(b)) return false;
+    const bp = this.ballPos();
+    const d = this.assistAim(b, aim).setY(0).normalize();
+    const v = this.ballVel();
+    b.intent.jump = true;
+    b.body.applyImpulse({ x: 0, y: BRO.mass * 3.2, z: 0 }, true);
+    this.ball.setLinvel({ x: v.x * 0.15 + d.x * 15, y: Math.max(1.2, Math.min(v.y, 2.6)), z: v.z * 0.15 + d.z * 15 });
+    b.kickKind = 'header';
+    b.kickT = 0;
+    b.face.copy(d);
+    this.holder = null;
+    this.lastTouch = b;
+    this.lastPasser = null;
+    this.emit({ type: 'header', pos: bp, team: b.team, strength: 12 });
+    return true;
   }
 
   /** shot with the default aim: straight at the goal (AI) */
@@ -907,6 +1076,7 @@ export class PartyWorld {
       }
       return ok;
     }
+    if (hb > 1.15 && hb < 2.4 && b.grounded && b === this.controlled) return this.headAt(b, aim);
     if (hb > 0.25) return this.shootAt(b, Math.max(0.5, power), aim, 'volley');
     return this.shootAt(b, power, aim);
   }
@@ -1064,13 +1234,16 @@ export class PartyWorld {
     this.lastTouch = b;
     // wrong-foot the defenders who were about to tackle
     const p = b.position();
+    let fooled = 0;
     for (const o of this.teamBros(1 - b.team)) {
       const q = o.position();
       if (o.role !== 'GK' && Math.hypot(q.x - p.x, q.z - p.z) < 3.2 && o.state === 'up') {
         o.fooled = 0.8;
+        fooled++;
         if (this.rng.chance(0.3)) o.knockDown(0.8); // ankles broken
       }
     }
+    this.addFire(b.team, fooled ? 0.1 : 0.04);
     this.emit({ type: 'skill', text: kind, pos: p, team: b.team });
     return true;
   }
@@ -1113,12 +1286,38 @@ export class PartyWorld {
       if (Math.hypot(bp.x - p.x, bp.z - p.z) > reach || bp.y > 2.5) continue;
       if (this.lastTouch?.team === gk.team && this.holder?.team === gk.team) continue;
       gk.catchCd = 0.7;
+      const fb = this.fireBall;
+      if (fb && fb.team !== gk.team) {
+        gk.catchCd = 1.2;
+        const v = this.preVel.clone();
+        // the human's keeper saves more on the easy levels, the AI's keeper more on the hard ones
+        const lvl = this.opts.difficulty ?? 'normal';
+        const block = gk.team === this.humanTeam ? { easy: 0.4, normal: 0.3, hard: 0.2 }[lvl] : { easy: 0.15, normal: 0.25, hard: 0.35 }[lvl];
+        if (this.rng.chance(block)) {
+          // heroic block: the ball flies off, the keeper is flattened anyway
+          const away = new Vector3(-Math.sign(ogx) * 0.6, 0, Math.sign(bp.z || 1)).normalize();
+          this.ball.setLinvel({ x: away.x * 14, y: 6, z: away.z * 14 });
+          gk.knockDown(1.6, v.clone().setY(0).normalize().multiplyScalar(120).setY(80));
+          this.endFire();
+          this.lastTouch = gk;
+          this.emit({ type: 'save', pos: bp, team: gk.team, strength: 30 });
+        } else {
+          // the keeper is blown into his own net and the ball carries on
+          gk.knockDown(2.2, v.clone().setY(0).normalize().multiplyScalar(190).setY(110));
+          this.ball.setLinvel({ x: v.x * 0.8, y: v.y * 0.8, z: v.z * 0.8 });
+          this.emit({ type: 'burn', pos: bp, team: fb.team, strength: 20 });
+        }
+        continue;
+      }
       const sp = bv.length();
       const chance = sp < 6 ? 0.95 : skill * (sp > 22 ? 0.55 : 1);
       if (this.rng.chance(chance)) {
         this.gkHold = { gk, t: 0 };
         this.holder = null;
         this.lastTouch = gk;
+        this.lastPasser = null;
+        this.teams[1 - gk.team].combo = 0;
+        if (sp > 10) this.addFire(gk.team, 0.08);
         this.emit({ type: sp > 10 ? 'save' : 'catch', pos: bp, team: gk.team, strength: sp });
       } else if (sp > 8) {
         // parried
@@ -1165,7 +1364,7 @@ export class PartyWorld {
   }
 
   /** is the human's player involved with the ball (has it, can play it, or it is rolling to him)? */
-  private onBall(b: Bro) {
+  onBall(b: Bro) {
     if (this.holder === b || this.inReach(b)) return true;
     const bp = this.ballPos(), p = b.position();
     return Math.hypot(bp.x - p.x, bp.z - p.z) < 3.2 && !(this.holder && this.holder.team !== b.team);
@@ -1206,6 +1405,17 @@ export class PartyWorld {
     }
   }
 
+  /** who a human pass along `aim` goes to (null = into space) */
+  passChoice(b: Bro, aim: Vector3, mouse: boolean, dist: number) {
+    if (mouse && dist > 1) {
+      // to the mate nearest the cursor, else into the space you pointed at
+      const pt = b.position().addScaledVector(aim, dist);
+      return this.mateNear(b, pt, 6);
+    }
+    const m = this.bestMate(b, false, aim);
+    return m && (this.coneTo(b, m, aim) > (mouse ? 0.8 : 0.35)) ? m : null;
+  }
+
   // ---------------- the human bean ----------------
   private human(b: Bro, input: PartyInput, dt: number) {
     const prev = this.prevInput;
@@ -1222,6 +1432,22 @@ export class PartyWorld {
       b = this.controlled!;
     }
     b.intent = { moveX: input.mx, moveZ: input.mz, sprint: input.sprint, jump: input.jump, dive: input.tackle && !prev.tackle };
+    this.passTarget = null;
+    // receive assist: hands off the keys while a team-mate's pass comes = run to meet it
+    if (Math.hypot(input.mx, input.mz) < 0.1 && this.phase === 'play') {
+      const meet = receivePoint(this, b);
+      if (meet) {
+        const p = b.position();
+        const dx = meet.x - p.x, dz = meet.z - p.z;
+        const d = Math.hypot(dx, dz);
+        if (d > 0.3) {
+          const k = Math.min(1, d / 1.2) / d;
+          b.intent.moveX = dx * k;
+          b.intent.moveZ = dz * k;
+          b.intent.sprint = d > 3;
+        }
+      }
+    }
     if (this.phase === 'goal') return;
     const stick = new Vector3(input.mx, 0, input.mz);
     const mouse = Math.hypot(input.aimX, input.aimZ) > 0.5;
@@ -1235,6 +1461,7 @@ export class PartyWorld {
     const aimDist = mouse ? input.aimDist ?? 0 : 0;
     // without the ball the same buttons defend: pass = switch player, shot = slide tackle at the carrier
     const near = this.onBall(b);
+    this.passTarget = near && b.state === 'up' && !(this.holder && this.holder.team !== b.team) ? this.passChoice(b, aim, mouse, aimDist) : null;
     const opp = this.holder && this.holder.team !== b.team ? this.holder : null;
     if (!near && input.pass && !prev.pass && !this.buffer) {
       const target = this.pickSwitch();
@@ -1273,20 +1500,11 @@ export class PartyWorld {
       }
       if (this.inReach(b)) {
         this.buffer = null;
-        if (buf.kind === 'kick') this.smartKick(b, buf.power, buf.aim);
+        if (buf.kind === 'kick') this.smartKick(b, buf.power, buf.mouse ? buf.aim : this.assistAim(b, buf.aim));
         else if (buf.kind === 'pass') {
-          if (buf.mouse && buf.dist > 1) {
-            // to the mate nearest the cursor, else into the space you pointed at
-            const p = b.position();
-            const pt = p.clone().addScaledVector(buf.aim, buf.dist);
-            const m = this.mateNear(b, pt, 6);
-            if (m) this.passTo(b, m);
-            else this.passInto(b, buf.aim, Math.max(4, buf.dist));
-          } else {
-            const m = this.bestMate(b, false, buf.aim);
-            if (m && (!buf.mouse || this.coneTo(b, m, buf.aim) > 0.8)) this.passTo(b, m);
-            else this.passInto(b, buf.aim);
-          }
+          const m = this.passChoice(b, buf.aim, buf.mouse, buf.dist);
+          if (m) this.passTo(b, m);
+          else this.passInto(b, buf.aim, buf.mouse && buf.dist > 1 ? Math.max(4, buf.dist) : 13);
         } else if (buf.mouse && buf.dist > 3) {
           const p = b.position();
           const pt = p.clone().addScaledVector(buf.aim, buf.dist);

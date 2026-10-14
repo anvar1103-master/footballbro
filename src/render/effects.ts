@@ -79,6 +79,29 @@ export class Particles {
     }
   }
 
+  /** generic burst: sparks / flames (colours may be > 1 so bloom picks them up) */
+  burst(pos: THREE.Vector3, n: number, speed: number, colors: THREE.Color[], o: { size?: number; life?: number; gravity?: number; drag?: number; up?: number; spread?: number } = {}) {
+    for (let i = 0; i < n; i++) {
+      const p = this.spawn();
+      if (!p) return;
+      p.alive = true;
+      const sp = o.spread ?? 0;
+      p.p.set(pos.x + (Math.random() - 0.5) * sp, pos.y + (Math.random() - 0.5) * sp, pos.z + (Math.random() - 0.5) * sp);
+      const a = Math.random() * Math.PI * 2;
+      const e = (Math.random() - 0.3) * Math.PI * 0.5;
+      const s = speed * (0.4 + Math.random() * 0.6);
+      p.v.set(Math.cos(a) * Math.cos(e) * s, Math.sin(e) * s + (o.up ?? 0), Math.sin(a) * Math.cos(e) * s);
+      p.life = 0;
+      p.max = (o.life ?? 0.6) * (0.6 + Math.random() * 0.6);
+      p.size = (o.size ?? 0.12) * (0.6 + Math.random() * 0.8);
+      p.spin = (Math.random() - 0.5) * 14;
+      p.rot = Math.random() * 6;
+      p.gravity = o.gravity ?? 4;
+      p.drag = o.drag ?? 2.5;
+      p.color.copy(colors[i % colors.length]);
+    }
+  }
+
   update(dt: number) {
     let n = 0;
     for (const p of this.ps) {

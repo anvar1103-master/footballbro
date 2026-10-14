@@ -131,6 +131,95 @@ function boardTexture(teams: TeamInfo[]) {
   return t;
 }
 
+/** LED ribbon: bright text on black with a pixel grid, scrolls along */
+function ledRibbonTexture() {
+  const c = document.createElement('canvas');
+  c.width = 2048;
+  c.height = 64;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#05060a';
+  g.fillRect(0, 0, 2048, 64);
+  const items = ['FOOTBALLBRO', 'КРАШ-ТЕСТ ЛИГА', '🔥 ОГОНЬ', 'ФИНТЫ · ПОДКАТЫ · УДАРЫ ЧЕРЕЗ СЕБЯ', 'МАНЕКЕНЫ НЕ ЧУВСТВУЮТ БОЛИ'];
+  const cols = ['#ffd23f', '#3bc8ff', '#ff7a1a', '#ffffff', '#ff4fa3'];
+  g.font = 'bold 38px "Russo One", "Arial Black", sans-serif';
+  g.textBaseline = 'middle';
+  let x = 20;
+  let i = 0;
+  while (x < 2048) {
+    g.fillStyle = cols[i % cols.length];
+    const t = items[i % items.length];
+    g.fillText(t, x, 34);
+    x += g.measureText(t).width + 40;
+    g.fillStyle = '#444';
+    g.fillText('◆', x - 30, 34);
+    i++;
+  }
+  // LED pixel grid
+  g.fillStyle = 'rgba(0,0,0,0.45)';
+  for (let y = 0; y < 64; y += 4) g.fillRect(0, y, 2048, 1);
+  for (let xx = 0; xx < 2048; xx += 4) g.fillRect(xx, 0, 1, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = THREE.RepeatWrapping;
+  return t;
+}
+
+/** big LED screen above a goal: score, clock and big messages */
+class LedScreen {
+  canvas = document.createElement('canvas');
+  tex: THREE.CanvasTexture;
+  group = new THREE.Group();
+  private key = '';
+  constructor(x: number, face: number) {
+    this.canvas.width = 640;
+    this.canvas.height = 256;
+    this.tex = new THREE.CanvasTexture(this.canvas);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    const W = 9, H = 3.6;
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshBasicMaterial({ map: this.tex, toneMapped: false }));
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(W + 0.5, H + 0.5, 0.3), new THREE.MeshStandardMaterial({ color: '#1b1f2a', roughness: 0.5, metalness: 0.6 }));
+    frame.position.z = -0.17;
+    this.group.add(frame, screen);
+    this.group.position.set(x, 5.4, 0);
+    this.group.rotation.y = face * Math.PI / 2;
+  }
+  draw(teams: TeamInfo[], score: [number, number], clock: string, msg: string, flash: boolean) {
+    const key = `${score}|${clock}|${msg}|${flash}`;
+    if (key === this.key) return;
+    this.key = key;
+    const g = this.canvas.getContext('2d')!;
+    g.fillStyle = flash ? '#2a0a00' : '#06070c';
+    g.fillRect(0, 0, 640, 256);
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    if (msg) {
+      g.font = 'bold 120px "Lilita One", "Arial Black", sans-serif';
+      g.fillStyle = flash ? '#ffd23f' : '#ff7a1a';
+      g.fillText(msg, 320, 128, 600);
+    } else {
+      for (let i = 0; i < 2; i++) {
+        const cx = i ? 520 : 120;
+        g.fillStyle = teams[i].primary;
+        g.fillRect(cx - 95, 40, 190, 70);
+        g.fillStyle = '#ffffff';
+        g.font = 'bold 54px "Russo One", "Arial Black", sans-serif';
+        g.fillText(teams[i].short, cx, 78);
+      }
+      g.font = 'bold 130px "Lilita One", "Arial Black", sans-serif';
+      g.fillStyle = '#ffffff';
+      g.fillText(`${score[0]}:${score[1]}`, 320, 92);
+      g.font = 'bold 60px "Russo One", "Arial Black", sans-serif';
+      g.fillStyle = '#ffd23f';
+      g.fillText(clock, 320, 200);
+    }
+    // LED pixel grid
+    g.fillStyle = 'rgba(0,0,0,0.5)';
+    for (let y = 0; y < 256; y += 4) g.fillRect(0, y, 640, 1);
+    for (let x = 0; x < 640; x += 4) g.fillRect(x, 0, 1, 256);
+    this.tex.needsUpdate = true;
+  }
+}
+
 function hazardTexture() {
   const c = document.createElement('canvas');
   c.width = 32;
@@ -151,6 +240,14 @@ export class Arena {
   sweeper: THREE.Group;
   hype = 0;
   private lights: THREE.Mesh[] = [];
+  /** LED screens above the goals (score, clock, messages) */
+  screens: LedScreen[] = [];
+  private scrolling: THREE.Texture[] = [];
+  private ribbons: THREE.Texture[] = [];
+  private ribbonTex = ledRibbonTexture();
+  /** wall parts on the long sides: the one between the TV camera and the pitch is cut away */
+  private cutaway: { o: THREE.Object3D; side: number; kind: 'hide' | 'fade' }[] = [];
+  private cutSide = 0;
 
   constructor(teams: TeamInfo[]) {
     // ---- grass ----
@@ -187,17 +284,25 @@ export class Arena {
     const glassMat = new THREE.MeshPhysicalMaterial({ color: '#bfe3ff', transparent: true, opacity: 0.12, roughness: 0.05, metalness: 0, side: THREE.DoubleSide, depthWrite: false });
     const steel = new THREE.MeshStandardMaterial({ color: '#8d96a6', metalness: 0.6, roughness: 0.4 });
     const BH = 1.1; // board height
-    const wall = (x1: number, z1: number, x2: number, z2: number) => {
+    /** side = which long side the segment belongs to (+1 / -1 for z > 0 / z < 0, 0 = ends): the TV camera cuts the near one away */
+    const wall = (x1: number, z1: number, x2: number, z2: number, side = 0) => {
+      const cut = (o: THREE.Object3D, kind: 'hide' | 'fade') => {
+        if (side) this.cutaway.push({ o, side, kind });
+      };
       const len = Math.hypot(x2 - x1, z2 - z1);
       const yaw = -Math.atan2(z2 - z1, x2 - x1);
       const cx = (x1 + x2) / 2, cz = (z1 + z2) / 2;
       const tex = boardTex.clone();
       tex.needsUpdate = true;
       tex.repeat.set(len / 10, 1);
+      this.scrolling.push(tex);
+      const st = side ? steel.clone() : steel;
       const board = new THREE.Mesh(new THREE.BoxGeometry(len, BH, 0.3), [
-        steel, steel, new THREE.MeshStandardMaterial({ color: '#f2f2f2', roughness: 0.6 }), steel,
-        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55 }), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55 }),
+        st, st, new THREE.MeshStandardMaterial({ color: '#f2f2f2', roughness: 0.6 }), st,
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55, emissiveMap: tex, emissive: '#ffffff', emissiveIntensity: 0.35 }),
+        new THREE.MeshStandardMaterial({ map: tex, roughness: 0.55, emissiveMap: tex, emissive: '#ffffff', emissiveIntensity: 0.35 }),
       ]);
+      cut(board, 'fade');
       board.position.set(cx, BH / 2, cz);
       board.rotation.y = yaw;
       board.castShadow = true;
@@ -207,6 +312,7 @@ export class Arena {
       glass.position.set(cx, BH + (HALL_H - BH) / 2, cz);
       glass.rotation.y = yaw;
       this.group.add(glass);
+      cut(glass, 'hide');
       // mullions
       const n = Math.max(1, Math.round(len / 4));
       for (let i = 0; i <= n; i++) {
@@ -214,19 +320,33 @@ export class Arena {
         const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, HALL_H - BH, 0.1), steel);
         post.position.set(x1 + (x2 - x1) * t, BH + (HALL_H - BH) / 2, z1 + (z2 - z1) * t);
         this.group.add(post);
+        cut(post, 'hide');
+      }
+      if (side) {
+        // second tier: a thin scrolling LED ribbon on the glass just above the boards
+        const rt = this.ribbonTex.clone();
+        rt.needsUpdate = true;
+        rt.repeat.set(len / 30, 1);
+        this.ribbons.push(rt);
+        const ribbon = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.42), new THREE.MeshBasicMaterial({ map: rt, toneMapped: false }));
+        ribbon.position.set(cx, BH + 0.32, cz + side * 0.02);
+        ribbon.rotation.y = side > 0 ? Math.PI : 0;
+        this.group.add(ribbon);
+        cut(ribbon, 'hide');
       }
       const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.08, 0.12), steel);
       rail.position.set(cx, BH + 1.6, cz);
       rail.rotation.y = yaw;
       this.group.add(rail);
+      cut(rail, 'hide');
     };
     const c = ARENA.corner, o = 0.15;
-    wall(-L + c, -W - o, L - c, -W - o);
-    wall(-L + c, W + o, L - c, W + o);
+    wall(-L + c, -W - o, L - c, -W - o, -1);
+    wall(-L + c, W + o, L - c, W + o, 1);
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
         wall(sx * (L + o), sz * (ARENA.goalHalfW + 0.2), sx * (L + o), sz * (W - c));
-        wall(sx * (L - c), sz * (W + o), sx * (L + o), sz * (W - c));
+        wall(sx * (L - c), sz * (W + o), sx * (L + o), sz * (W - c), sz);
       }
       // glass above the goal and boards behind the net
       const gx = sx * (L + o);
@@ -278,6 +398,15 @@ export class Arena {
         this.lights.push(panel);
       }
 
+    // ---- LED screens high above each goal ----
+    for (const sx of [-1, 1]) {
+      const sc = new LedScreen(sx * (L + 0.1), -sx);
+      this.screens.push(sc);
+      this.group.add(sc.group);
+    }
+    this.teams = teams;
+    this.setScoreboard([0, 0], '3:00', '');
+
     // ---- goals ----
     for (const dir of [-1, 1]) {
       const white = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.3, metalness: 0.1 });
@@ -314,6 +443,39 @@ export class Arena {
     this.group.add(this.sweeper);
   }
 
+  private teams: TeamInfo[];
+  private msgT = 0;
+  private msg = '';
+  /** what the LED screens show; `msg` (e.g. ГОЛ!) flashes for a few seconds */
+  setScoreboard(score: [number, number], clock: string, msg: string, dur = 3) {
+    if (msg) {
+      this.msg = msg;
+      this.msgT = dur;
+    }
+    const flash = this.msgT > 0 && Math.floor(this.msgT * 4) % 2 === 0;
+    for (const s of this.screens) s.draw(this.teams, score, clock, this.msgT > 0 ? this.msg : '', flash);
+  }
+
+  /** hide the glass and fade the boards of long side `side` (+1 / -1), 0 = show everything */
+  setCutaway(side: number) {
+    if (side === this.cutSide) return;
+    this.cutSide = side;
+    for (const c of this.cutaway) {
+      const on = c.side === side;
+      if (c.kind === 'hide') c.o.visible = !on;
+      else {
+        const m = (c.o as THREE.Mesh).material as THREE.MeshStandardMaterial[];
+        for (const x of m) {
+          x.transparent = on;
+          x.opacity = on ? 0.28 : 1;
+          x.depthWrite = !on;
+          x.needsUpdate = true;
+        }
+        c.o.castShadow = !on;
+      }
+    }
+  }
+
   update(dt: number, time: number, sweeper: { on: boolean; angle: number }) {
     this.sweeper.visible = sweeper.on;
     if (sweeper.on) {
@@ -321,6 +483,10 @@ export class Arena {
       const lamp = this.sweeper.getObjectByName('lamp') as THREE.Mesh;
       (lamp.material as THREE.MeshStandardMaterial).emissiveIntensity = 1 + Math.abs(Math.sin(time * 8)) * 2;
     }
+    // LED boards scroll
+    for (const t of this.scrolling) t.offset.x = (t.offset.x + dt * 0.04) % 1;
+    for (const t of this.ribbons) t.offset.x = (t.offset.x - dt * 0.025) % 1;
+    this.msgT = Math.max(0, this.msgT - dt);
     // goal flash: light panels pulse with the hype
     this.hype = Math.max(0, this.hype - dt * 0.4);
     const k = 2.2 + this.hype * 2 * Math.abs(Math.sin(time * 10));

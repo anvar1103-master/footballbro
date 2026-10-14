@@ -171,6 +171,23 @@ export class Sound {
     this.noise(0.25, 'bandpass', 1400, 1.5, 0.12, 0.05);
   }
 
+  /** fire shot: a deep boom with a roaring whoosh */
+  fire() {
+    if (!this.ctx) return;
+    this.tone(90, 0.7, 0.7, 'sine', 32);
+    this.tone(180, 0.35, 0.25, 'sawtooth', 50);
+    const { f, t } = this.noise(1.1, 'lowpass', 2400, 0.8, 0.45, 0.01);
+    f.frequency.setValueAtTime(3200, t);
+    f.frequency.exponentialRampToValueAtTime(300, t + 1.0);
+  }
+
+  /** a meter filled up / a step done: bright rising chime */
+  chime(steps = 3) {
+    if (!this.ctx) return;
+    const notes = [660, 830, 990, 1320];
+    for (let i = 0; i < steps; i++) this.tone(notes[i % notes.length], 0.28, 0.16, 'triangle', undefined, i * 0.08);
+  }
+
   crowdReact(kind: 'goal' | 'ooh' | 'cheer') {
     if (!this.ctx) return;
     if (kind === 'goal') {
