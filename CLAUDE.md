@@ -26,6 +26,12 @@
   chosen tactics; the human only orders where the ball goes (LMB pass, RMB shot, Space lob to the clicked point) →
   layout 'coach' is the DEFAULT. Menu shows three modes: «Тренер» (coach), «Капитан» (mouseonly), «Футболист»
   (classic keyboard: 'mouse' or 'keys' layout). Tactics (formation, style, pressing) in the menu and the pause panel.
+  (8) "players run back and forth, passes are painfully slow, the pass must go exactly where I click, drop the ragdoll
+  for the experiment — a manager-Dota-football-sim" → coach mode = manager sim: Bro.stiff (no ragdoll, upright, crisp
+  steering; knockDown = short stumble, dive = lunge), glued dribbling, passToPoint (firm 11–25 m/s ground pass EXACTLY
+  to the clicked point + a designated receiver who meets it and gets a clean first touch), stable AI (chaser
+  hysteresis, smoothed supporter targets, sticky open spots, possession-based shape), the holder carries the ball /
+  shields and waits for the order.
 - **Soccerbro = the OLD FIFA-style game**, kept only as a library of ready code (ball physics, cloth net — the user likes
   the goal net —, ball texture, sounds, particles). `classic.html` → `src/main.ts`, `src/sim/`, `src/render/`, `src/ui/`.
   Old link: https://claude.ai/artifact/1pQLJehMiRup8dydP6x37b. Don't develop it further unless asked.
@@ -57,7 +63,9 @@ world.ts  — PartyWorld: ARENA 50×32 (also a FieldDims for GoalNet), walls up 
             (our holder / keeper / nearest) when inReach, kept 1.2 s (can be given before a pass arrives). Shift+LMB
             (input.run) → runOrders "run there" for the nearest free player; RMB on the opponent carrier → runOrders press
             (target bro, slides in). coachWaits(): our holder dribbles and waits for orders for 3 s (holdT), then the AI decides.
-            controlled = whoever of ours is on the ball (marker only). Teams have tactic {formation, style, press};
+            controlled = whoever of ours is on the ball (marker only). Manager feel: all bros stiff (opts.coach), dribbleAssist
+            glues the ball to a stiff holder (needs a real challenge to lose it), first touch kills the ball, passToPoint()
+            sets `receiver` (runOrders receive=true; always captures), `possession` = last team on the ball. Teams have tactic {formation, style, press};
             FORMATIONS per field-player count (2: 1-1/2, 3: 1-2/2-1/1-1-1, 4: 1-2-1/2-2/3-1/1-1-2), STYLE_INFO, PRESS_INFO.
             Input is WORLD-space (main.ts maps keys camera-relative).
 brain.ts  — AI: supporters hold formation slots (block slides with the ball, style pushes it up/back), high press sends

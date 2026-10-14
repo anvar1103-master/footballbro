@@ -94,6 +94,9 @@ export class Bro {
   landT = -1;
   /** a short burst of speed (mouse-only "рывок") */
   boost = 0;
+  /** manager / coach mode: no ragdoll — always upright, crisp movement, never falls */
+  stiff = false;
+  private yawS = 0;
 
   constructor(
     world: PWorld,
@@ -156,8 +159,59 @@ export class Bro {
     this.kickCharge = 0;
   }
 
+  /** manager mode: kinematic-feeling upright body — velocity steered directly, rotation set from the facing */
+  private stepStiff(dt: number) {
+    const body = this.body;
+    const v = body.linvel();
+    if (this.state !== 'up' && this.state !== 'dive') this.state = 'up';
+    if (this.state === 'dive' && this.stateT > 0.35) this.state = 'up';
+    const it = this.intent;
+    const il = Math.hypot(it.moveX, it.moveZ);
+    if (il > 0.15 && this.state === 'up') this.face.set(it.moveX / il, 0, it.moveZ / il);
+    // turn smoothly towards the facing, stay perfectly upright
+    const want = Math.atan2(this.face.x, this.face.z);
+    let d = want - this.yawS;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    this.yawS += d * Math.min(1, dt * 14);
+    _q.setFromAxisAngle(UP, this.yawS);
+    body.setRotation({ x: _q.x, y: _q.y, z: _q.z, w: _q.w }, true);
+    body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    const p = body.translation();
+    if (p.y < BRO.centerY - 0.05) body.setTranslation({ x: p.x, y: BRO.centerY, z: p.z }, true);
+    if (this.state === 'dive') return; // lunging: keep the momentum
+    if (it.dive && this.jumpCd <= 0) {
+      // a lunge / poke instead of a slide on the ground
+      this.jumpCd = 1.0;
+      this.state = 'dive';
+      this.stateT = 0;
+      body.setLinvel({ x: this.face.x * 8.5, y: v.y, z: this.face.z * 8.5 }, true);
+      return;
+    }
+    const sprinting = it.sprint && this.stamina > 0.05 && il > 0.3;
+    const max = (sprinting ? BRO.sprint : BRO.jog) * (this.kickT >= 0 ? 0.6 : 1) * this.speedMul * (this.boost > 0 ? 1.4 : 1);
+    if (sprinting) this.stamina = Math.max(0, this.stamina - 0.08 * dt);
+    else this.stamina = Math.min(1, this.stamina + 0.1 * dt);
+    const wx = (it.moveX / Math.max(1, il)) * max, wz = (it.moveZ / Math.max(1, il)) * max;
+    let dvx = wx - v.x, dvz = wz - v.z;
+    const dvl = Math.hypot(dvx, dvz);
+    const lim = 34 * this.accelMul * dt;
+    if (dvl > lim) {
+      dvx = (dvx / dvl) * lim;
+      dvz = (dvz / dvl) * lim;
+    }
+    body.setLinvel({ x: v.x + dvx, y: Math.min(v.y, 0.5), z: v.z + dvz }, true);
+    this.phase += this.speed * dt * 2.1;
+  }
+
   /** Lose balance for `t` seconds (tumble). */
   knockDown(t = 1.4, impulse?: Vector3) {
+    if (this.stiff) {
+      // no ragdoll: just a short stumble
+      this.boost = 0;
+      this.fooled = Math.max(this.fooled, Math.min(0.5, t * 0.3));
+      return;
+    }
     if (this.state === 'down') {
       this.stateT = Math.min(this.stateT, 0.3);
     } else {
@@ -214,6 +268,10 @@ export class Bro {
     // tipping over by itself (pushed, tripped) -> fall
     if (this.state === 'up' && up.y < 0.45) this.knockDown(1.2);
 
+    if (this.stiff) {
+      this.stepStiff(dt);
+      return;
+    }
     // ---- balance (PD torque towards world up) ----
     let kp = BRO.uprightKp;
     let kd = BRO.uprightKd;

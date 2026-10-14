@@ -209,9 +209,13 @@ export class PartyWorld {
   /** coach mode: a pending order (executed by whoever of ours plays the ball next) */
   order: { kind: 'pass' | 'kick' | 'lob' | 'skill'; x: number; z: number; power: number; t: number } | null = null;
   /** coach mode: players sent somewhere ("run there") or at an opponent ("press him") */
-  runOrders = new Map<Bro, { x: number; z: number; target: Bro | null; t: number }>();
+  runOrders = new Map<Bro, { x: number; z: number; target: Bro | null; t: number; receive?: boolean }>();
   /** how long the current holder has had the ball */
   holdT = 0;
+  /** coach mode: the team-mate a pass to a point is meant for (he runs to meet it and always controls it) */
+  receiver: { bro: Bro; t: number } | null = null;
+  /** which team had the ball last (for the AI's attack / defence shape; does not flicker on loose balls) */
+  possession = 0;
   /** who played the last pass (to count completed passes) */
   private lastPasser: Bro | null = null;
   private preVel = new Vector3();
@@ -299,6 +303,7 @@ export class PartyWorld {
       for (let i = 0; i < this.opts.size; i++) {
         const b = new Bro(W, id, t.index, i === 0 ? 'GK' : 'FIELD', id, names[id % names.length], 0, 0);
         b.number = i === 0 ? 1 : [7, 9, 10, 11, 8, 4][i - 1] ?? 12 + i;
+        b.stiff = !!this.opts.coach; // manager mode: no ragdoll
         this.bodyMap.set(b.body.b, b);
         this.bros.push(b);
         id++;
@@ -459,6 +464,8 @@ export class PartyWorld {
     for (const b of this.bros) b.step(dt, this.world);
     this.ballForces(dt);
     if (this.phase === 'play') this.dribbleAssist(dt);
+    if (this.receiver && (this.receiver.t -= dt) < 0) this.receiver = null;
+    if (this.gkHold) this.possession = this.gkHold.gk.team;
     if (this.phase === 'play' && !coach) this.autoSwitch();
     this.switchTarget = this.pickSwitch();
     if (this.sweeper.on) this.updateSweeper(dt);
@@ -664,9 +671,11 @@ export class PartyWorld {
       const mine = b === this.holder;
       // a shot flying past can't be stopped dead by a foot: it only deflects off the body
       const bvx = bv.x - b.velocity().x, bvz = bv.z - b.velocity().z;
-      if (!mine && bvx * bvx + bvz * bvz > 15 * 15) continue;
-      if (d < reachBase + (mine ? 1.0 : 0.55) && front > (mine ? -0.3 : 0.25)) {
-        const score = d - (mine ? 0.45 : 0);
+      if (!mine && bvx * bvx + bvz * bvz > 15 * 15 && b !== this.receiver?.bro) continue;
+      // manager mode: the ball sticks to the holder's feet (he turns with it); taking it needs a real challenge
+      const glue = mine && b.stiff;
+      if (d < reachBase + (glue ? 1.3 : mine ? 1.0 : 0.55) && front > (glue ? -1.1 : mine ? -0.3 : 0.25)) {
+        const score = d - (glue ? 0.9 : mine ? 0.45 : 0);
         if (score < bd) {
           bd = score;
           best = b;
@@ -677,11 +686,33 @@ export class PartyWorld {
       this.emit({ type: 'kick', pos: bp, strength: 2, team: best.team });
       this.gotBall(best);
       this.holdT = 0;
+      this.possession = best.team;
+      if (this.receiver?.bro === best || best.team !== this.receiver?.bro.team) this.receiver = null;
+      if (this.opts.coach) {
+        // clean first touch: the ball is killed dead at the feet
+        const pv = best.velocity();
+        this.ball.setLinvel({ x: pv.x, y: Math.min(0, bv.y), z: pv.z });
+        this.ball.setAngvel({ x: 0, y: 0, z: 0 });
+        bv.set(pv.x, 0, pv.z);
+      }
     } else this.holdT += dt;
     this.holder = best;
     if (!best) return;
     const p = best.position();
     const v = best.velocity();
+    if (best.stiff) {
+      // the ball glides to a spot just in front of the feet and rolls along with the player
+      const off = reachBase + 0.18 + (best.speed > 6 ? 0.25 : 0);
+      const tx = p.x + best.face.x * off, tz = p.z + best.face.z * off;
+      const a = Math.min(1, dt * 18);
+      const nx = bp.x + (tx - bp.x) * a, nz = bp.z + (tz - bp.z) * a;
+      const vx = v.x + (tx - bp.x) * 4, vz = v.z + (tz - bp.z) * 4;
+      this.ball.setTranslation({ x: nx, y: this.ballR, z: nz });
+      this.ball.setLinvel({ x: vx, y: 0, z: vz });
+      this.ball.setAngvel({ x: vz / this.ballR, y: 0, z: -vx / this.ballR });
+      this.lastTouch = best;
+      return;
+    }
     const human = best === this.controlled;
     const sprint = best.intent.sprint && best.speed > 6;
     // touch rhythm: the ball rolls a little ahead and the player catches it up
@@ -1141,6 +1172,39 @@ export class PartyWorld {
     return this.strike(b, dir.multiplyScalar(v).setY(airborne ? 1 : 0.3), 'pass', undefined, !airborne);
   }
 
+  /**
+   * Coach mode: a firm ground pass that goes exactly to `pt`; the team-mate best placed to get there is told to
+   * meet it (and is guaranteed a clean first touch).
+   */
+  passToPoint(b: Bro, pt: Vector3, lob = false) {
+    const bp = this.ballPos();
+    const d = Math.hypot(pt.x - bp.x, pt.z - bp.z);
+    const dir = new Vector3(pt.x - bp.x, 0, pt.z - bp.z).normalize();
+    const ok = lob ? this.lob(b, pt.clone().setY(0)) : this.strike(b, dir.clone().multiplyScalar(Math.max(11, Math.min(25, 8 + d * 0.65))).setY(0.2), 'pass', undefined, true);
+    if (!ok) return false;
+    // who meets it: the closest team-mate to a point on the ball's path (the end of it, or where he cuts in)
+    let best: Bro | null = null;
+    let bt = 1e9;
+    let meet = pt.clone();
+    for (const q of this.teamBros(b.team)) {
+      if (q === b || q.state !== 'up' || (q.role === 'GK' && d > 6)) continue;
+      const p = q.position();
+      const along = Math.max(d * 0.45, Math.min(d, (p.x - bp.x) * dir.x + (p.z - bp.z) * dir.z));
+      const mx = bp.x + dir.x * along, mz = bp.z + dir.z * along;
+      const tt = Math.hypot(mx - p.x, mz - p.z) / 7 + (d - along) * 0.03 + Math.hypot(pt.x - p.x, pt.z - p.z) * 0.02;
+      if (tt < bt) {
+        bt = tt;
+        best = q;
+        meet = new Vector3(mx, 0, mz);
+      }
+    }
+    if (best) {
+      this.receiver = { bro: best, t: 3 };
+      this.runOrders.set(best, { x: meet.x, z: meet.z, target: null, t: 2.5, receive: true });
+    }
+    return true;
+  }
+
   /** the team-mate of `b` closest to point `pt` (within `max` m) */
   mateNear(b: Bro, pt: Vector3, max: number) {
     let best: Bro | null = null;
@@ -1501,7 +1565,7 @@ export class PartyWorld {
     const hasPt = input.aimPX !== undefined && input.aimPZ !== undefined;
     const pt = new Vector3(input.aimPX ?? 0, 0, input.aimPZ ?? 0);
     const c = this.controlled;
-    this.passTarget = ex && hasPt && this.phase === 'play' ? this.mateNear(ex, pt, 5) : null;
+    this.passTarget = ex && hasPt && this.phase === 'play' ? this.mateNear(ex, pt, 1.8) : null;
     if (c) {
       c.charging = input.kick && !input.run ? 'kick' : null;
       c.kickCharge = (input.power ?? 0) * 0.8;
@@ -1573,11 +1637,11 @@ export class PartyWorld {
     // face the ball so the kick connects
     ex.face.set(bp.x - p.x, 0, bp.z - p.z).normalize();
     if (o.kind === 'pass') {
-      const m = this.mateNear(ex, target, 5);
-      if (m) this.passTo(ex, m);
-      else this.passInto(ex, dir, Math.max(4, Math.min(30, dist)));
+      // clicked on (or right next to) a team-mate: to his feet; otherwise exactly to the clicked point
+      const m = this.mateNear(ex, target, 1.8);
+      this.passToPoint(ex, m ? m.position().setY(0) : target);
     } else if (o.kind === 'kick') this.smartKick(ex, Math.max(0.3, o.power), dir);
-    else this.lob(ex, target);
+    else this.passToPoint(ex, target, true);
     ex.face.copy(dir);
   }
 
