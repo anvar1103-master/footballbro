@@ -169,3 +169,26 @@ describe('golazo shoot-out keeper', () => {
     expect(runOut(c).result?.ok).toBe(false);
   });
 });
+
+describe('golazo free-kick challenge', () => {
+  it('hitting the bonus target adds points', () => {
+    const L = lvl({ kind: 'freekick', mates: [{ at: [20, 0] }], wall: 0, gk: 0 });
+    const m = new Moment(L, 1);
+    m.target = { z: 2.8, y: 1.8, r: 0.55 };
+    m.act(shot(2.8, 1.8, 0));
+    runOut(m);
+    expect(m.result?.ok).toBe(true);
+    expect(m.targetHit).toBe(true);
+    expect(m.result!.bonuses.map((b) => b.label)).toContain('В мишень!');
+  });
+  it('after a goal the scorer runs off to celebrate', () => {
+    const m = new Moment(lvl({ gk: 0 }), 1);
+    m.act(shot(-2.8, 1.0));
+    runOut(m);
+    expect(m.result?.ok).toBe(true);
+    const start = m.scorer!.pos.clone();
+    for (let i = 0; i < 120; i++) m.step();
+    expect(m.scorer!.pos.distanceTo(start)).toBeGreaterThan(2);
+    expect(m.scorer!.celebrate).toBe(true);
+  });
+});

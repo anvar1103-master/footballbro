@@ -12,11 +12,17 @@
   keeper reads the shot from its initial flight (a curler fools him, long flights give him time) and dives. A team-mate
   who reaches the ball freezes the moment again (at his feet, or in the air for a volley / header). Goal → points
   (curl, top corner, volley/header, long range, passes, one-touch) → 1–3 stars; slow-mo + net ripple + replay.
-  Career: 20 levels in 2 chapters (open play, free kicks with a jumping wall, penalties with a guessing keeper, corners,
+  Career: 30 levels in 3 chapters (open play, free kicks with a jumping wall, penalties with a guessing keeper, corners,
   crosses, one-twos, counters), progress in localStorage. Quick mode «Серия пенальти» (3 difficulties, Penalty Shooters
   style): alternate kicks vs an AI team, 5 each then sudden death; on their kick YOU keep goal — draw a line to where
   to dive during the run-up (camera inside the goal behind the keeper, net faded). A ground pass that the preview shows
-  intercepted is turned into a lob automatically when the lob gets through (smartPass). Sunset stadium with crowd (Soccerbro's stadium), cloth net.
+  intercepted is turned into a lob automatically when the lob gets through (smartPass). Quick mode «Штрафные: на
+  выживание» (Free Kick Classic style): endless random free kicks, 3 lives, wall/distance/keeper grow with goals, a pink
+  bonus target on the goal (+500, Moment.target/targetHit), best score saved. After a goal the scorer runs to the corner
+  flag (Moment.scorer, celebration camera), then a side replay of ~2 s before the goal (frames stamped with sim time).
+  Shots from beyond ~19 m stray from the drawn point (σ = 4 cm per metre, seeded) — no guaranteed long-range screamers.
+  LevelDef.hint = a first move found by the bot (.scratch/hints.py writes them from the solver output); after two failed
+  tries a «💡 Подсказка» button draws it. Levels 1 and 3 show an animated finger swipe until the first star. Sunset stadium with crowd (Soccerbro's stadium), cloth net.
   Playable link: (see README) · GitHub Pages: https://anvar1103-master.github.io/footballbro/
 - **Footballbro = the previous game** (`party.html` → `src/party/`), kept playable. Its DudeActor (crash-test dummies)
   is reused by Golazo through a kinematic puppet adapter.

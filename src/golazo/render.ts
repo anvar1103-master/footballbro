@@ -390,6 +390,33 @@ export class GolazoRenderer {
     if (receiver) this.receiverRing.position.set(receiver.pos.x, 0.035, receiver.pos.z);
   }
 
+  /** free-kick challenge bonus target: a glowing ring on the goal plane */
+  private targetMesh: THREE.Mesh | null = null;
+  setTarget(t: { z: number; y: number; r: number } | null) {
+    if (!this.targetMesh) {
+      const m = new THREE.Mesh(
+        new THREE.RingGeometry(0.72, 1, 40).rotateY(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xff3d8b, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+      );
+      const inner = new THREE.Mesh(new THREE.CircleGeometry(0.72, 40).rotateY(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }));
+      m.add(inner);
+      m.renderOrder = 4;
+      this.scene.add(m);
+      this.targetMesh = m;
+    }
+    this.targetMesh.visible = !!t;
+    if (t) {
+      this.targetMesh.position.set(GOAL_X + 0.03, t.y, t.z);
+      this.targetMesh.scale.setScalar(t.r);
+    }
+  }
+  burstTarget() {
+    const t = this.targetMesh;
+    if (!t || !t.visible) return;
+    this.particles.burst(t.position, 60, 6, [new THREE.Color('#ff3d8b'), new THREE.Color('#ffd23f'), new THREE.Color('#ffffff')], { size: 0.12, life: 1.2, gravity: 4 });
+    t.visible = false;
+  }
+
   /** a ring on the goal (the keeper's dive spot in a shoot-out) */
   markGoal(p: THREE.Vector3 | null) {
     this.goalTarget.visible = !!p;
@@ -423,6 +450,10 @@ export class GolazoRenderer {
       this.receiverRing.scale.set(s, 1, s);
     }
     if (this.goalTarget.visible) this.goalTarget.rotation.x = this.time * 2;
+    if (this.targetMesh?.visible) {
+      const k = 1 + Math.sin(this.time * 4) * 0.06;
+      this.targetMesh.children[0].scale.setScalar(k);
+    }
     // camera shake
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 2.5);
