@@ -17,34 +17,46 @@ interface Mind {
   target: Vector3;
   sprint: boolean;
   role: 'chase' | 'back' | 'support';
+  /** smoothed steering target (supporters glide instead of jerking between spots) */
+  smooth: Vector3;
+  /** the open spot picked last time (sticky, so players don't hop between spots) */
+  spot: Vector3 | null;
 }
 const minds = new WeakMap<Bro, Mind>();
 
 function mind(b: Bro) {
   let m = minds.get(b);
   if (!m) {
-    m = { t: (b.id % 5) * 0.04, target: new Vector3(), sprint: false, role: 'support' };
+    m = { t: (b.id % 5) * 0.04, target: new Vector3(), sprint: false, role: 'support', smooth: b.position().setY(0), spot: null };
     minds.set(b, m);
   }
   return m;
 }
 
 /** who on `team` should go for the ball: shortest time to it (the human counts if close) */
+const lastChaser = new WeakMap<PartyWorld, (Bro | null)[]>();
 function chaserOf(w: PartyWorld, team: number) {
+  // a pass to a point has its receiver: nobody else chases it
+  if (w.receiver && w.receiver.bro.team === team && !w.holder) return w.receiver.bro;
+  if (w.holder?.team === team) return w.holder;
   const bp = w.ballPos();
   let best: Bro | null = null;
   let bt = 1e9;
+  const prev = lastChaser.get(w) ?? [null, null];
   for (const b of w.teamBros(team)) {
     if (b.state === 'down') continue;
     const p = b.position();
     let t = Math.hypot(bp.x - p.x, bp.z - p.z) / 7;
     if (b.role === 'GK') continue; // keepers keep goal
-    if (b === w.controlled) t -= 0.3; // humans tend to go for it themselves
+    if (b === prev[team]) t -= 0.35; // stick with the same man (no swapping back and forth)
+    if (b === w.controlled && !w.opts.coach) t -= 0.3; // humans tend to go for it themselves
     if (t < bt) {
       bt = t;
       best = b;
     }
   }
+  prev[team] = best;
+  lastChaser.set(w, prev);
   return best;
 }
 
@@ -78,8 +90,10 @@ export function think(w: PartyWorld, b: Bro, dt: number) {
     decide(w, b, m, sk);
   }
 
-  // steer to the target
-  const dx = m.target.x - p.x, dz = m.target.z - p.z;
+  // steer to the target (supporters glide to theirs)
+  if (m.role === 'support' && !w.runOrders.has(b)) m.smooth.lerp(m.target, 1 - Math.exp(-dt * 2.2));
+  else m.smooth.copy(m.target);
+  const dx = m.smooth.x - p.x, dz = m.smooth.z - p.z;
   const d = Math.hypot(dx, dz);
   if (d > 0.25) {
     const s = Math.min(1, d / 1.2);
@@ -135,6 +149,16 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
         const dh = Math.hypot(hp.x - p.x, hp.z - p.z);
         b.face.set(hp.x - p.x, 0, hp.z - p.z).normalize();
         if (dh < 2.4 && dh > 0.9) pendingDive.add(b);
+      } else if (ro.receive) {
+        // meet the pass: go to the meeting point, face the ball, step into it when it is close
+        const db = Math.hypot(bp.x - p.x, bp.z - p.z);
+        m.target.set(ro.x, 0, ro.z);
+        if (db < 3 || Math.hypot(ro.x - p.x, ro.z - p.z) < 0.6) {
+          m.target.set(bp.x, 0, bp.z);
+          m.sprint = db > 1.5;
+        }
+        b.face.set(bp.x - p.x, 0, bp.z - p.z).normalize();
+        if (!w.receiver || w.receiver.bro !== b) w.runOrders.delete(b);
       } else m.target.set(ro.x, 0, ro.z);
       return;
     }
@@ -143,6 +167,24 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
   const oppBall = !!w.holder && w.holder.team !== b.team;
   const prog = dir * bp.x; // how far the ball is towards THEIR goal
   const pressOff = oppBall && ((tac.press === 0 && prog > 2) || (tac.press === 1 && prog > 11));
+
+  if (w.holder === b && w.coachWaits(b)) {
+    // coach mode: keep the ball and wait for the order — carry it forward into space, shield it when pressed
+    m.role = 'chase';
+    m.sprint = false;
+    const toGoal = new Vector3(gx - p.x, 0, -p.z * 0.4).normalize();
+    let pressed = false;
+    for (const o of w.teamBros(1 - b.team)) {
+      const q = o.position();
+      const dx = q.x - p.x, dz = q.z - p.z;
+      if (Math.hypot(dx, dz) < 3.5 && dx * toGoal.x + dz * toGoal.z > 0) pressed = true;
+    }
+    if (pressed) {
+      m.target.copy(p);
+      b.face.copy(toGoal);
+    } else m.target.set(p.x + toGoal.x * 3, 0, p.z + toGoal.z * 3);
+    return;
+  }
 
   if (chaser === b && !pressOff) {
     m.role = 'chase';
@@ -238,7 +280,7 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
   const sup = mates.filter((q) => q !== chaser && q.role !== 'GK');
   const i = Math.max(0, sup.indexOf(b));
   const n = Math.max(1, sup.length);
-  const attacking = (w.holder?.team ?? w.lastTouch?.team ?? b.team) === b.team;
+  const attacking = (w.holder?.team ?? w.possession) === b.team;
   // the formation: each field player has a slot; the whole block slides with the ball, the style decides how far
   const field = mates.filter((q) => q.role !== 'GK');
   const slots = FORMATIONS[Math.max(2, Math.min(4, field.length))]?.[tac.formation] ?? Object.values(FORMATIONS[Math.max(2, Math.min(4, field.length))] ?? {})[0];
@@ -272,13 +314,16 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
         const t = ((q.x - bp.x) * lx + (q.z - bp.z) * lz) / ll;
         if (t > 0.1 && t < 0.9 && Math.hypot(bp.x + lx * t - q.x, bp.z + lz * t - q.z) < 1.3) block++;
       }
-      const sc = free - block * 4 - Math.hypot(ox, oz) * 0.15 + (dir * (tx - bp.x) > 0 ? 1 : 0);
+      const stick = m.spot ? Math.hypot(tx - m.spot.x, tz - m.spot.z) * 0.35 : 0;
+      const sc = free - block * 4 - Math.hypot(ox, oz) * 0.15 + (dir * (tx - bp.x) > 0 ? 1 : 0) - stick;
       if (sc > best) {
         best = sc;
         m.target.set(tx, 0, tz);
       }
     }
   }
+  if (attacking) m.spot = m.target.clone();
+  else m.spot = null;
   // a loose ball close by: go for it too
   if (!w.holder && Math.hypot(bp.x - p.x, bp.z - p.z) < 3) m.target.set(bp.x, 0, bp.z);
   m.sprint = Math.hypot(m.target.x - p.x, m.target.z - p.z) > 6;

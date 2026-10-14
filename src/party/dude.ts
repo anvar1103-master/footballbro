@@ -589,6 +589,13 @@ export class DudeActor {
         P.elbow = [0, 0];
         P.legX = [0.3, 0.1];
         P.knee = [0.3, 0.6];
+      } else if (b.stiff) {
+        // manager mode: a lunge with one leg stretched at the ball (no ragdoll slide)
+        P.legX = [-1.3, 0.5];
+        P.knee = [0.1, 0.7];
+        P.spineX = 0.35;
+        P.armZ = [1.2, -1.2];
+        P.armX = [0.5, -0.5];
       } else {
         // slide tackle: feet first, one leg out, leaning back on an arm
         P.flip = Math.PI;

@@ -450,6 +450,7 @@ describe('bean ball', () => {
 
   it('mouse only: without the ball LMB is a dash, an incoming pass is met automatically', async () => {
     const { w, c, mate, park } = await sandbox(35);
+    w.opts.autoSwitch = false;
     w.ball.setTranslation({ x: 10, y: w.ballR, z: 8 });
     run(w, 0.1);
     w.step(PARTY_DT, { ...NO_INPUT, mouseOnly: true, pass: true, aimX: 1, aimZ: 0, aimDist: 6 });
@@ -534,18 +535,21 @@ describe('bean ball', () => {
     w.step(PARTY_DT, { ...NO_INPUT, kick: true, aimPX: op.x, aimPZ: op.z });
     w.step(PARTY_DT, { ...NO_INPUT, aimPX: op.x, aimPZ: op.z });
     expect(w.runOrders.size).toBe(1);
-    // "Навал" pushes the field players further up than "Контратака"
+    // "Навал" keeps the team much higher up than "Контратака"
     const avg = async (style: 'all' | 'counter') => {
       const v = await PartyWorld.create({ humanTeam: -1, size: 4, matchLength: 120, seed: 43, events: false, tactics: [{ formation: '1-2', style, press: 1 }, undefined] });
       run(v, 2.6);
-      v.ball.setTranslation({ x: 0, y: v.ballR, z: 0 });
       const f = v.teamBros(0).filter((b) => b.role === 'FIELD');
       let sum = 0, n = 0;
-      for (let t = 0; t < 4; t += PARTY_DT) {
-        v.holder = f[0];
-        v.lastTouch = f[0];
+      for (let t = 0; t < 5; t += PARTY_DT) {
+        // their ball in the centre circle: how deep does our shape drop?
+        v.placeBall(0, 0);
+        v.possession = 1;
         v.step(PARTY_DT, NO_INPUT);
-        if (t > 2) for (const b of f.slice(1)) (sum += b.position().x), n++;
+        if (t > 3) {
+          const sup = [...f].sort((a, c) => c.position().length() - a.position().length()).slice(0, 2);
+          for (const b of sup) (sum += b.position().x), n++;
+        }
       }
       return sum / n;
     };
