@@ -27,6 +27,7 @@ const el = (html: string) => {
 interface Progress {
   stars: Record<number, number>;
   best: Record<number, number>;
+  soWins?: number[];
   muted?: boolean;
 }
 const SAVE_KEY = 'golazo.progress.v1';
@@ -65,6 +66,23 @@ const snapActor = (a: Actor): ActorView => ({
 
 type Screen = 'title' | 'map' | 'intro' | 'play' | 'result';
 
+/** penalty shoot-out vs an AI team: you shoot, then you keep (draw where to dive) */
+interface Shootout {
+  diff: number;
+  opp: TeamInfo;
+  us: boolean[];
+  them: boolean[];
+  turn: 'us' | 'them';
+  keeper: { t: number; ai: Action; guess: THREE.Vector2 | null; startX: number } | null;
+  over: boolean;
+}
+const SO_DIFF = [
+  { name: 'Лёгкая', gk: 0.35, aim: 0.55 },
+  { name: 'Средняя', gk: 0.6, aim: 0.3 },
+  { name: 'Трудная', gk: 0.85, aim: 0.12 },
+];
+const RUN_UP = 1.6;
+
 class App {
   r: GolazoRenderer;
   sound = new Sound();
@@ -101,6 +119,7 @@ class App {
   private overT = 0;
   private hud!: HTMLElement;
   private views = new Map<number, ActorView>();
+  so: Shootout | null = null;
 
   constructor() {
     const quality = (qs.get('q') as Quality) || (matchMedia('(pointer: coarse)').matches ? 'medium' : 'high');
@@ -142,6 +161,7 @@ class App {
         <div class="gz-sub">Нарисуй свой лучший гол</div>
         <button class="gz-btn gz-big" data-go>${totalStars(this.progress) ? 'ПРОДОЛЖИТЬ' : 'ИГРАТЬ'}</button>
         <button class="gz-btn gz-ghost" data-map>Уровни · ★ ${totalStars(this.progress)}/${LEVELS.length * 3}</button>
+        <div class="gz-so-pick"><span>Серия пенальти</span>${SO_DIFF.map((d, i) => `<button class="gz-btn gz-ghost" data-so="${i}">${d.name}${this.progress.soWins?.[i] ? ` · 🏆${this.progress.soWins[i]}` : ''}</button>`).join('')}</div>
         <div class="gz-how">
           <div><b>1</b>Проведи линию от мяча</div>
           <div><b>2</b>К партнёру — пас, в ворота — удар</div>
@@ -156,10 +176,137 @@ class App {
       this.sound.start();
       this.showMap();
     };
+    node.querySelectorAll<HTMLButtonElement>('[data-so]').forEach((b) => {
+      b.onclick = () => {
+        this.sound.start();
+        this.startShootout(Number(b.dataset.so));
+      };
+    });
+  }
+
+  // ---------------------------------------------------------------- penalty shoot-out
+
+  startShootout(diff: number) {
+    const opps = TEAM_PRESETS.filter((t) => t !== this.home && t.short !== 'SUN');
+    this.so = { diff, opp: opps[Math.floor(Math.random() * opps.length)], us: [], them: [], turn: 'us', keeper: null, over: false };
+    this.attempt = Math.floor(Math.random() * 1000);
+    this.nextKick();
+  }
+
+  private soLevel(): LevelDef {
+    const so = this.so!;
+    const n = so.us.length + so.them.length;
+    return {
+      id: 900 + n, chapter: 0, kind: 'penalty', title: 'Серия пенальти', brief: '',
+      mates: [{ at: [11, 0], n: [9, 10, 7, 11, 8, 4, 5, 6, 3, 2][Math.floor(n / 2) % 10] }],
+      opps: [], gk: SO_DIFF[so.diff].gk, stars: [650, 800],
+    };
+  }
+
+  /** who has won (or null while it is still open); 5 each, then sudden death */
+  private soWinner(): 'us' | 'them' | null {
+    const so = this.so!;
+    const a = so.us.filter(Boolean).length, b = so.them.filter(Boolean).length;
+    const na = so.us.length, nb = so.them.length;
+    if (na <= 5 && nb <= 5) {
+      if (a + (5 - na) < b) return 'them';
+      if (b + (5 - nb) < a) return 'us';
+      if (na === 5 && nb === 5 && a !== b) return a > b ? 'us' : 'them';
+      return null;
+    }
+    if (na === nb && a !== b) return a > b ? 'us' : 'them';
+    return null;
+  }
+
+  private nextKick() {
+    const so = this.so!;
+    const w = this.soWinner();
+    if (w || so.us.length >= 15) {
+      this.showShootoutEnd(w ?? 'them');
+      return;
+    }
+    so.turn = so.us.length <= so.them.length ? 'us' : 'them';
+    this.attempt++;
+    this.loadLevel(this.soLevel(), false);
+    const m = this.m!;
+    if (so.turn === 'them') {
+      // their kicker, our keeper
+      m.userKeeper = true;
+      this.r.setActors(m, so.opp, this.home);
+      const d = SO_DIFF[so.diff];
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const centre = Math.random() < 0.12;
+      const z = centre ? (Math.random() - 0.5) * 1.6 : side * (1.5 + Math.random() * 2.1);
+      const y = 0.25 + Math.random() * 2.0;
+      const err = d.aim;
+      const ai: Action = {
+        type: 'shot',
+        target: new THREE.Vector3(GOAL_X, Math.max(0.15, y + (Math.random() - 0.5) * err * 1.4), z + (Math.random() - 0.5) * err * 2),
+        curl: (Math.random() - 0.5) * 0.5,
+      };
+      const h = m.holder!;
+      so.keeper = { t: 0, ai, guess: null, startX: h.pos.x - 3.2 };
+      h.pos.x = so.keeper.startX;
+      this.r.showRuns(null);
+    } else so.keeper = null;
+    this.camSnap = true;
+    this.beginPlay();
+  }
+
+  private soRecord() {
+    const so = this.so!;
+    const goal = !!this.m?.result?.ok;
+    if (so.turn === 'us') so.us.push(goal);
+    else so.them.push(goal);
+    this.nextKick();
+  }
+
+  private soDots() {
+    const so = this.so!;
+    const row = (arr: boolean[], team: TeamInfo) => {
+      const n = Math.max(5, arr.length);
+      let h = `<i class="kit" style="background:${team.primary};color:${ink(team.primary)}">${team.short}</i>`;
+      for (let k = 0; k < n; k++) h += `<b class="${k < arr.length ? (arr[k] ? 'g' : 'x') : ''}"></b>`;
+      return `<div>${h}</div>`;
+    };
+    return `<div class="gz-so">${row(so.us, this.home)}${row(so.them, so.opp)}</div>`;
+  }
+
+  private showShootoutEnd(w: 'us' | 'them') {
+    const so = this.so!;
+    so.over = true;
+    this.screen = 'result';
+    if (w === 'us') {
+      const wins = (this.progress.soWins ??= [0, 0, 0]);
+      wins[so.diff] = (wins[so.diff] ?? 0) + 1;
+      saveProgress(this.progress);
+      this.sound.chime(4);
+      this.sound.crowdReact('goal');
+    } else this.sound.crowdReact('ooh');
+    const a = so.us.filter(Boolean).length, b = so.them.filter(Boolean).length;
+    const node = this.setUi(`
+      <div class="gz-screen gz-result ${w === 'us' ? 'win' : 'lose'}">
+        <div class="gz-card">
+          <h1>${w === 'us' ? 'ПОБЕДА!' : 'ПОРАЖЕНИЕ'}</h1>
+          <div class="gz-points">${a} : ${b}</div>
+          ${this.soDots()}
+          <p class="why">${w === 'us' ? `Кубок твой! Сложность: ${SO_DIFF[so.diff].name.toLowerCase()}.` : 'В следующий раз прыгай раньше — и бей в самые углы.'}</p>
+          <div class="gz-row">
+            <button class="gz-btn gz-big" data-again>↻ ЕЩЁ СЕРИЮ</button>
+          </div>
+          <button class="gz-link" data-menu>В меню</button>
+        </div>
+      </div>`);
+    $('[data-again]', node).onclick = () => this.startShootout(so.diff);
+    $('[data-menu]', node).onclick = () => {
+      this.so = null;
+      this.showTitle();
+    };
   }
 
   showMap() {
     this.screen = 'map';
+    this.so = null;
     const p = this.progress;
     let html = `<div class="gz-screen gz-map"><div class="gz-maphead"><button class="gz-icon" data-back>‹</button><h1>Карьера</h1><div class="gz-total">★ ${totalStars(p)}/${LEVELS.length * 3}</div></div><div class="gz-chapters">`;
     CHAPTERS.forEach((name, ci) => {
@@ -185,6 +332,7 @@ class App {
 
   startLevel(L: LevelDef) {
     this.sound.start();
+    this.so = null;
     this.attempt = 0;
     this.loadLevel(L, true);
     this.screen = 'intro';
@@ -208,7 +356,7 @@ class App {
 
   private loadLevel(L: LevelDef, fresh: boolean) {
     this.level = L;
-    this.away = TEAM_PRESETS[[1, 4, 6, 5, 7, 2][L.id % 6]];
+    this.away = this.so ? this.so.opp : TEAM_PRESETS[[1, 4, 6, 5, 7, 2][L.id % 6]];
     this.m = new Moment(L, 1 + this.attempt);
     this.r.setActors(this.m, this.home, this.away);
     this.r.showRuns(this.m);
@@ -229,7 +377,7 @@ class App {
     this.hud = this.setUi(`
       <div class="gz-hud">
         <div class="gz-top">
-          <div class="gz-badge"><b>${this.level.id}</b>${this.level.title}</div>
+          ${this.so ? this.soDots() : `<div class="gz-badge"><b>${this.level.id}</b>${this.level.title}</div>`}
           <div class="gz-tools">
             <button class="gz-icon" data-restart title="Заново (R)">↻</button>
             <button class="gz-icon" data-mute title="Звук (M)">${this.sound.muted ? '🔇' : '🔊'}</button>
@@ -246,8 +394,9 @@ class App {
         <div class="gz-banner" data-banner></div>
         <div class="gz-toast" data-toast></div>
       </div>`);
-    $('[data-restart]', this.hud).onclick = () => this.restart();
-    $('[data-menu]', this.hud).onclick = () => this.showMap();
+    $('[data-restart]', this.hud).onclick = () => (this.so ? this.startShootout(this.so.diff) : this.restart());
+    $('[data-menu]', this.hud).onclick = () => (this.so ? ((this.so = null), this.showTitle()) : this.showMap());
+    if (this.so) for (const sel of ['.gz-cam', '[data-lob]']) ($(sel, this.hud) as HTMLElement).style.display = 'none';
     $('[data-mute]', this.hud).onclick = (e) => {
       this.toggleMute();
       (e.currentTarget as HTMLElement).textContent = this.sound.muted ? '🔇' : '🔊';
@@ -266,6 +415,7 @@ class App {
     this.setLob(false);
     this.updateHint();
     this.sound.whistle(1);
+    if (this.so) this.banner(this.so.turn === 'us' ? 'ТВОЙ УДАР' : 'ТЫ В ВОРОТАХ', '', this.so.turn === 'us' ? '#ffd23f' : '#6fe3ff');
   }
 
   private setLob(v: boolean) {
@@ -294,7 +444,8 @@ class App {
     const m = this.m;
     if (!h || !m) return;
     let t = '';
-    if (m.phase === 'aim') {
+    if (this.so?.turn === 'them') t = m.phase === 'aim' ? (this.so.keeper?.guess ? '<b>Прыжок выбран!</b>' : 'Проведи линию <b>туда, куда прыгнуть</b> — пока он разбегается!') : '';
+    else if (m.phase === 'aim') {
       if (m.touch === 'header') t = 'Мяч летит на голову — <b>рисуй удар головой!</b>';
       else if (m.touch === 'volley') t = 'Мяч в воздухе — <b>бей с лёта!</b>';
       else if (m.kicks === 0) t = this.level.kind === 'open' || this.level.kind === 'corner' ? 'Проведи линию от мяча: <b>к партнёру — пас</b>, <b>в ворота — удар</b>' : 'Проведи линию от мяча <b>в ворота</b>. Изогни — закрутишь';
@@ -303,7 +454,7 @@ class App {
     h.innerHTML = t;
     h.style.opacity = t ? '1' : '0';
     const lob = this.hud?.querySelector('[data-lob]') as HTMLElement | null;
-    if (lob) lob.style.display = m.phase === 'aim' && (this.level.kind === 'open' || this.level.kind === 'corner') ? '' : 'none';
+    if (lob) lob.style.display = !this.so && m.phase === 'aim' && (this.level.kind === 'open' || this.level.kind === 'corner') ? '' : 'none';
   }
 
   private banner(text: string, sub = '', color = '#ffd23f') {
@@ -387,6 +538,15 @@ class App {
       if (!canDraw() || e.button === 2) return;
       c.setPointerCapture(e.pointerId);
       this.drawing = true;
+      if (this.so?.turn === 'them') {
+        if (this.so.keeper?.guess) {
+          this.drawing = false;
+          return;
+        }
+        this.stroke = [{ x: e.clientX, y: e.clientY }];
+        this.previewDirty = true;
+        return;
+      }
       // the line always starts at the ball (a press near it starts right there)
       const b = this.r.project(this.m!.ball.pos);
       const d = Math.hypot(e.clientX - b.x, e.clientY - b.y);
@@ -408,8 +568,20 @@ class App {
       const len = this.strokeLen();
       this.pending = null;
       this.r.setPreview(null, null, null);
+      const kp = this.so?.keeper;
+      if (this.so?.turn === 'them' && kp) {
+        // the keeper's dive: where the line ends on the goal
+        if (a && a.type === 'shot' && len > 20) {
+          kp.guess = new THREE.Vector2(Math.max(-HW - 0.2, Math.min(HW + 0.2, a.target.z)), Math.max(0.2, Math.min(GH + 0.1, a.target.y)));
+          this.r.markGoal(new THREE.Vector3(GOAL_X, kp.guess.y, kp.guess.x));
+          this.sound.whoosh();
+          this.inkFade = 1;
+          this.updateHint();
+        } else this.clearInk();
+        return;
+      }
       if (a && len > 28 && canDraw()) {
-        this.m!.act(a);
+        this.m!.act(a.type === 'pass' ? this.smartPass(a).a : a);
         this.r.showRuns(null);
         this.inkFade = 1;
         this.updateHint();
@@ -461,7 +633,7 @@ class App {
     const o = ray.origin, d = ray.direction;
     let shot: THREE.Vector3 | null = null;
     let ground: THREE.Vector3 | null = null;
-    const tg = d.x > 1e-4 ? (GOAL_X - o.x) / d.x : -1;
+    const tg = Math.abs(d.x) > 1e-4 ? (GOAL_X - o.x) / d.x : -1;
     const t0 = d.y < -1e-4 ? -o.y / d.y : -1;
     if (tg > 0) {
       const P = o.clone().addScaledVector(d, tg);
@@ -469,7 +641,7 @@ class App {
     }
     if (!shot && t0 > 0) {
       const G = o.clone().addScaledVector(d, t0);
-      if (G.x < GOAL_X - 0.2) ground = new THREE.Vector3(G.x, 0, Math.max(-33.5, Math.min(33.5, G.z)));
+      if (G.x < GOAL_X - 0.2 && o.x < GOAL_X) ground = new THREE.Vector3(G.x, 0, Math.max(-33.5, Math.min(33.5, G.z)));
       else if (Math.abs(G.z) < HW + 3) shot = new THREE.Vector3(GOAL_X, 0.12, G.z);
     }
     // bend of the stroke relative to the chord (screen space)
@@ -483,10 +655,31 @@ class App {
       if (Math.abs(v) > Math.abs(dev)) dev = v;
     }
     const ratio = dev / L;
-    let curl = Math.abs(ratio) < 0.035 ? 0 : Math.max(-1, Math.min(1, -ratio * 2.6));
+    // the ball bends much less on screen than people draw: a clearly bent line (≈ 20 % of its length) = full curl
+    let curl = Math.abs(ratio) < 0.03 ? 0 : Math.max(-1, Math.min(1, -Math.sign(ratio) * (Math.abs(ratio) - 0.03) * 5.5));
     curl = Math.round(curl * 20) / 20;
     if (shot) this.pending = { type: 'shot', target: shot, curl };
     else if (ground) this.pending = { type: this.forceLob || m.autoLob(ground) ? 'lob' : 'pass', target: ground, curl: this.forceLob ? curl : 0 };
+  }
+
+  /** Play the pass out on a copy of the moment; a ground pass that would be cut out goes in the air if that works. */
+  private smartPass(a: Action): { a: Action; danger: THREE.Vector3 | null } {
+    const m = this.m!;
+    const probe = (act: Action) => {
+      const c = m.clone();
+      c.act(act);
+      let g = 0;
+      while ((c.phase === 'windup' || c.phase === 'fly') && g++ < 1200) c.step();
+      if (!c.result || c.result.ok) return null;
+      const e = c.events.find((ev) => ev.type === 'intercept' || ev.type === 'catch' || ev.type === 'block');
+      return e?.pos?.clone() ?? c.ball.pos.clone();
+    };
+    const danger = probe(a);
+    if (danger && a.type === 'pass' && !this.forceLob) {
+      const lob: Action = { ...a, type: 'lob' };
+      if (!probe(lob)) return { a: lob, danger: null };
+    }
+    return { a, danger };
   }
 
   private drawInk(dt: number) {
@@ -530,25 +723,24 @@ class App {
     const m = this.m;
     if (!m) return;
 
-    if (this.previewDirty && this.drawing) {
+    if (this.previewDirty && this.drawing && this.so?.turn === 'them') {
       this.previewDirty = false;
       this.computeAction();
       const a = this.pending;
+      this.r.markGoal(a && a.type === 'shot' ? new THREE.Vector3(GOAL_X, a.target.y, a.target.z) : null);
+    } else if (this.previewDirty && this.drawing) {
+      this.previewDirty = false;
+      this.computeAction();
+      let a = this.pending;
       if (a) {
+        const sp = a.type === 'shot' ? { a, danger: null } : this.smartPass(a);
+        a = sp.a;
+        this.pending = a;
         let path = m.preview(a);
-        let danger: THREE.Vector3 | null = null;
-        if (a.type !== 'shot') {
-          // play the pass out on a copy of the moment: show where it would be cut out
-          const probe = m.clone();
-          probe.act(a);
-          let g = 0;
-          while ((probe.phase === 'windup' || probe.phase === 'fly') && g++ < 1200) probe.step();
-          if (probe.result && !probe.result.ok) {
-            const e = probe.events.find((ev) => ev.type === 'intercept' || ev.type === 'catch' || ev.type === 'block');
-            danger = e?.pos?.clone() ?? probe.ball.pos.clone();
-            const cut = path.findIndex((p) => Math.hypot(p.x - danger!.x, p.z - danger!.z) < 0.9);
-            if (cut > 1) path = path.slice(0, cut + 1);
-          }
+        const danger = sp.danger;
+        if (danger) {
+          const cut = path.findIndex((p) => Math.hypot(p.x - danger.x, p.z - danger.z) < 0.9);
+          if (cut > 1) path = path.slice(0, cut + 1);
         }
         this.r.setPreview(path, a.type, a.type === 'shot' ? null : m.pickReceiver(a.target, a.type === 'lob'), danger);
       } else this.r.setPreview(null, null, null);
@@ -558,6 +750,23 @@ class App {
     if (this.replay) {
       this.stepReplay(dt);
       return;
+    }
+
+    // shoot-out, their kick: the run-up, then the shot (our dive is whatever was drawn by then)
+    const kp = this.so?.turn === 'them' && this.screen === 'play' ? this.so.keeper : null;
+    if (kp && m.phase === 'aim') {
+      kp.t += dt;
+      const h = m.holder!;
+      const k = Math.min(1, kp.t / RUN_UP);
+      h.pos.x = kp.startX + (m.ball.pos.x - 0.55 - kp.startX) * k;
+      h.vel.set(k < 1 ? 3.2 / RUN_UP * 1.4 : 0, 0, 0);
+      if (kp.t >= RUN_UP) {
+        m.userGuess = kp.guess;
+        m.act(kp.ai);
+        this.drawing = false;
+        this.clearInk();
+        this.updateHint();
+      }
     }
 
     // slow motion near the goal on shots
@@ -584,7 +793,14 @@ class App {
     }
     if (m.phase === 'fly' || m.phase === 'windup' || m.phase === 'over') this.record();
 
-    if (m.phase === 'over' && this.screen === 'play' && !this.resultShown) {
+    if (this.so && m.phase === 'over' && this.screen === 'play') {
+      this.overT += dt;
+      if (m.overT > 1.7 && !this.resultShown) {
+        this.resultShown = true;
+        this.soRecord();
+        return;
+      }
+    } else if (m.phase === 'over' && this.screen === 'play' && !this.resultShown) {
       this.overT += dt;
       const res = m.result!;
       if (res.ok && m.overT > 1.4 && this.frames.length > 30 && !this.replayDone) {
@@ -595,6 +811,7 @@ class App {
     } else this.overT = 0;
 
     this.updateCamera(dt);
+    this.r.netFade = this.so?.turn === 'them' ? 0.22 : 1;
     for (const a of m.actors) this.views.set(a.id, liveView(a));
     this.r.draw(this.views, b, dt, m.phase === 'aim' && m.holder ? liveView(m.holder) : null);
   }
@@ -638,7 +855,7 @@ class App {
     if (i >= this.frames.length - 1) {
       this.replay = null;
       this.hud?.classList.remove('replaying');
-      this.r.camera.fov = 44;
+      this.r.camera.fov = this.r.baseFov();
       this.r.camera.updateProjectionMatrix();
       this.showResult();
     }
@@ -678,6 +895,11 @@ class App {
           break;
         case 'goal': {
           const res = m.result!;
+          if (this.so?.turn === 'them') {
+            this.sound.crowdReact('ooh');
+            this.banner('ГОЛ', 'пропустил', '#ff6b6b');
+            break;
+          }
           this.sound.crowdReact('goal');
           this.sound.whistle(1);
           this.r.stadium.hype(1);
@@ -691,7 +913,11 @@ class App {
         case 'catch':
           this.sound.crowdReact('ooh');
           this.sound.bounce(10);
-          this.banner(e.type === 'save' ? 'СЕЙВ!' : 'ПОЙМАЛ!', '', '#7fe0ff');
+          if (this.so?.turn === 'them') {
+            this.sound.crowdReact('goal');
+            this.r.shake = 0.8;
+            this.banner('ТАЩИШЬ!', e.type === 'save' ? 'сейв' : 'поймал', '#6fe3ff');
+          } else this.banner(e.type === 'save' ? 'СЕЙВ!' : 'ПОЙМАЛ!', '', '#7fe0ff');
           break;
         case 'intercept':
         case 'block':
@@ -702,7 +928,8 @@ class App {
         case 'miss':
         case 'lost':
           this.sound.crowdReact('ooh');
-          this.banner(m.result?.reason.toUpperCase() ?? 'МИМО!', '', '#ff6b6b');
+          if (this.so?.turn === 'them') this.banner('МИМО!', 'повезло', '#6fe3ff');
+          else this.banner(m.result?.reason.toUpperCase() ?? 'МИМО!', '', '#ff6b6b');
           break;
         case 'dive':
           this.sound.whoosh();
@@ -739,18 +966,34 @@ class App {
       pos = new THREE.Vector3(c.x - h * 0.55, h, c.z * 0.85);
       look = new THREE.Vector3(c.x + 2, 0, c.z * 0.9);
       rate = 2.5;
+    } else if (this.so?.turn === 'them') {
+      // behind our keeper, looking through the net at the kicker
+      // inside the goal, just behind and beside the keeper (under the bar)
+      pos = new THREE.Vector3(GOAL_X + 1.9, 1.5, 1.1);
+      look = new THREE.Vector3(GOAL_X - 11, 0.75, -0.2);
+      rate = 5;
     } else if (m.phase === 'aim' || m.phase === 'windup') {
+      // look at the goal, pulled a little towards the team-mates so their runs stay in frame
       const dir = new THREE.Vector3(GOAL_X - b.x, 0, -b.z * 0.65);
       if (dir.lengthSq() < 1) dir.set(1, 0, 0);
-      dir.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yawOff);
+      dir.normalize();
+      const pull = new THREE.Vector3();
+      for (const a of m.actors) {
+        if (a.team !== 0 || a === m.holder) continue;
+        const run = a.runs[m.kicks];
+        const p = run && run.length ? run[run.length - 1] : a.pos;
+        pull.add(new THREE.Vector3(p.x - b.x, 0, p.z - b.z).normalize());
+      }
+      dir.addScaledVector(pull, this.r.portrait ? 0.45 : 0.25).normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yawOff);
       const far = Math.min(1, Math.max(0, (GOAL_X - b.x - 12) / 30));
       if (this.topView) {
         pos = new THREE.Vector3(b.x + dir.x * 8 - dir.x * 2, 38, b.z + dir.z * 8 + 0.01);
         look = new THREE.Vector3(b.x + dir.x * 12, 0, b.z + dir.z * 12);
       } else {
         // ball in the lower part of the screen, the goal and the runs ahead visible
-        const back = 7 + far * 5;
-        const up = 3.2 + far * 3.3 + (m.touch !== 'feet' ? b.y * 0.8 : 0);
+        const pk = this.r.portrait ? 1.45 : 1;
+        const back = (7 + far * 5) * pk;
+        const up = (3.2 + far * 3.3) * (this.r.portrait ? 1.7 : 1) + (m.touch !== 'feet' ? b.y * 0.8 : 0);
         pos = new THREE.Vector3(b.x - dir.x * back, up, b.z - dir.z * back);
         const ahead = 7 + far * 6;
         look = new THREE.Vector3(b.x + dir.x * ahead, 0.9, b.z + dir.z * ahead);
@@ -758,6 +1001,11 @@ class App {
       rate = 6;
       // never move the camera under the player's pen
       if (this.drawing) return;
+    } else if (this.so) {
+      // shoot-out: a fixed broadcast angle from behind the spot
+      pos = new THREE.Vector3(GOAL_X - 19, 3.4, 0);
+      look = new THREE.Vector3(GOAL_X, 1.1, 0);
+      rate = 2.5;
     } else {
       // follow the flight
       const v = m.ball.vel;

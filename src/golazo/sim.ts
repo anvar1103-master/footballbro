@@ -127,6 +127,9 @@ export class Moment {
   /** penalty keeper's guess: -1 / +1 side, 0 = stays */
   private guess = 0;
   private guessPt = new Vector2();
+  /** shoot-out: the player is the keeper (team 1); userGuess = (z, y) of his dive, null = stay */
+  userKeeper = false;
+  userGuess: Vector2 | null = null;
   private path: { t: number; p: Vector3 }[] = [];
   private passes = 0;
   private oneTouchPasses = 0;
@@ -160,10 +163,10 @@ export class Moment {
 
     for (const [i, o] of level.opps.entries()) {
       const a = mk(1, 'def', W(o.at[0], o.at[1]), OPP_NAMES[i % OPP_NAMES.length], [4, 5, 3, 2, 6, 8][i % 6]);
-      a.speed = o.speed ?? 6.4;
-      a.reach = o.reach ?? 0.85;
-      a.zone = o.zone ?? 7;
-      a.react = o.react ?? 0.3;
+      a.speed = o.speed ?? 5.9;
+      a.reach = o.reach ?? 0.8;
+      a.zone = o.zone ?? 6;
+      a.react = o.react ?? 0.36;
       this.actors.push(a);
     }
     if (level.wall) {
@@ -297,7 +300,7 @@ export class Moment {
     const eta = rcv ? Math.hypot(tgt.x - rcv.pos.x, tgt.z - rcv.pos.z) / rcv.speed + 0.3 : 0;
     if (action.type === 'lob') {
       // into the box at a team-mate: aim at his head / chest for a first-time finish
-      const inBox = GOAL_X - tgt.x < 20 && Math.abs(tgt.z) < 20;
+      const inBox = GOAL_X - tgt.x < 14 && Math.abs(tgt.z) < 13;
       tgt.y = rcv && inBox ? 1.45 : BALL.radius;
       const side = -action.curl * 22;
       // the flatter the quicker; loft it more when the runner needs time
@@ -422,7 +425,7 @@ export class Moment {
     // defenders and keeper react after their reaction time
     for (const a of this.actors) {
       if (a.team !== 1) continue;
-      a.react = a.role === 'gk' ? 0.2 + (1 - this.gkSkill) * 0.2 + this.rng.range(0, 0.05) : (this.level.opps[a.id - this.level.mates.length]?.react ?? 0.3) + this.rng.range(0, 0.06);
+      a.react = a.role === 'gk' ? 0.2 + (1 - this.gkSkill) * 0.2 + this.rng.range(0, 0.05) : (this.level.opps[a.id - this.level.mates.length]?.react ?? 0.36) + this.rng.range(0, 0.06);
       a.goal = null;
       if (a.role === 'wall' && action.type === 'shot') {
         a.jumpV = 4.2;
@@ -432,7 +435,14 @@ export class Moment {
     }
     this.kplan = null;
     this.kErr = this.rng.gauss() * (1 - this.gkSkill) * 0.45;
-    if (this.level.kind === 'penalty') {
+    if (this.level.kind === 'penalty' && this.userKeeper) {
+      // the player is the keeper: he dives where the player drew (or stays and reads it)
+      const g = this.userGuess;
+      this.guess = g ? Math.sign(g.x) || 1 : 0;
+      if (g) this.guessPt.copy(g);
+      // no dive drawn: he just stands there
+      if (this.keeper) this.keeper.react = g ? 0.04 : 99;
+    } else if (this.level.kind === 'penalty') {
       // reads the run-up: right side with a chance growing with skill
       const side = Math.sign(kick.vel.z) || 1;
       const r = this.rng.next();
@@ -633,7 +643,7 @@ export class Moment {
         const d = Math.hypot(s.p.x - a.pos.x, s.p.z - a.pos.z);
         const fromStart = Math.hypot(s.p.x - a.start.x, s.p.z - a.start.z);
         if (fromStart > a.zone) continue;
-        if (d - a.reach <= a.speed * rel * 0.95) {
+        if (d - a.reach <= a.speed * Math.max(0, rel - 0.12)) {
           best = s.p;
           break;
         }
