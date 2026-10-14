@@ -472,6 +472,111 @@ describe('bean ball', () => {
     expect(got).toBe(true);
   });
 
+  it('coach mode: the holder waits for orders, clicks pass / shoot to the point, auto-pass after a while', async () => {
+    const w = await PartyWorld.create({ humanTeam: 0, size: 4, matchLength: 120, seed: 41, events: false, coach: true });
+    run(w, 2.6);
+    const mine = w.teamBros(0).filter((b) => b.role === 'FIELD');
+    const [a, m] = mine;
+    const park = (keep: unknown[]) => w.bros.forEach((b, i) => !keep.includes(b) && b.teleport(-18 + i * 1.2, -13, 1));
+    a.teleport(0, 0, 1);
+    m.teleport(8, 5, -1);
+    park([a, m]);
+    w.ball.setTranslation({ x: 0.75, y: w.ballR, z: 0 });
+    w.ball.setLinvel({ x: 0, y: 0, z: 0 });
+    // no order: the holder keeps the ball (no pass / shot of his own)
+    let kicked = false;
+    for (let t = 0; t < 1.5; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park([a, m]);
+      kicked ||= w.events.some((e) => e.type === 'kick' && (e.strength ?? 0) > 5);
+      w.events.length = 0;
+    }
+    expect(kicked).toBe(false);
+    expect(w.holder).toBe(a);
+    // click on the mate with LMB (press + release): the pass goes to him
+    const mp = m.position();
+    w.step(PARTY_DT, { ...NO_INPUT, pass: true, aimPX: mp.x, aimPZ: mp.z });
+    w.step(PARTY_DT, { ...NO_INPUT, aimPX: mp.x, aimPZ: mp.z });
+    let combo = false;
+    for (let t = 0; t < 2.5 && !combo; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park([a, m]);
+      combo = w.events.some((e) => e.type === 'combo' && e.team === 0);
+      w.events.length = 0;
+    }
+    expect(combo).toBe(true);
+    // RMB at the far corner: a shot that goes in (no keeper)
+    const h = w.holder!;
+    expect(h.team).toBe(0);
+    const gx = w.goalX(0);
+    w.step(PARTY_DT, { ...NO_INPUT, kick: true, power: 0.6, aimPX: gx, aimPZ: 2 });
+    w.step(PARTY_DT, { ...NO_INPUT, power: 0.6, aimPX: gx, aimPZ: 2 });
+    let goal = false;
+    for (let t = 0; t < 3 && !goal; t += PARTY_DT) {
+      w.step(PARTY_DT, NO_INPUT);
+      park([h]);
+      goal = w.events.some((e) => e.type === 'goal' && e.team === 0);
+      w.events.length = 0;
+    }
+    expect(goal).toBe(true);
+  });
+
+  it('coach mode: RMB on the opponent sends the nearest player to press, tactics move the team', async () => {
+    const w = await PartyWorld.create({ humanTeam: 0, size: 4, matchLength: 120, seed: 42, events: false, coach: true, tactics: [{ formation: '1-2', style: 'all', press: 1 }, undefined] });
+    run(w, 2.6);
+    const o = w.teamBros(1)[1];
+    o.teleport(-6, 0, -1);
+    w.ball.setTranslation({ x: -6.75, y: w.ballR, z: 0 });
+    w.ball.setLinvel({ x: 0, y: 0, z: 0 });
+    run(w, 0.2);
+    expect(w.holder).toBe(o);
+    const op = o.position();
+    w.step(PARTY_DT, { ...NO_INPUT, kick: true, aimPX: op.x, aimPZ: op.z });
+    w.step(PARTY_DT, { ...NO_INPUT, aimPX: op.x, aimPZ: op.z });
+    expect(w.runOrders.size).toBe(1);
+    // "Навал" pushes the field players further up than "Контратака"
+    const avg = async (style: 'all' | 'counter') => {
+      const v = await PartyWorld.create({ humanTeam: -1, size: 4, matchLength: 120, seed: 43, events: false, tactics: [{ formation: '1-2', style, press: 1 }, undefined] });
+      run(v, 2.6);
+      v.ball.setTranslation({ x: 0, y: v.ballR, z: 0 });
+      const f = v.teamBros(0).filter((b) => b.role === 'FIELD');
+      let sum = 0, n = 0;
+      for (let t = 0; t < 4; t += PARTY_DT) {
+        v.holder = f[0];
+        v.lastTouch = f[0];
+        v.step(PARTY_DT, NO_INPUT);
+        if (t > 2) for (const b of f.slice(1)) (sum += b.position().x), n++;
+      }
+      return sum / n;
+    };
+    expect(await avg('all')).toBeGreaterThan((await avg('counter')) + 3);
+  });
+
+  it('the coach tutorial can be played through', async () => {
+    const w = await PartyWorld.create({ humanTeam: 0, size: 3, matchLength: 1e6, seed: 3, difficulty: 'easy', events: false, coach: true });
+    let step = 0, done = false;
+    const tut = new Tutorial(w, { show: (s) => (step = s), praise: () => {}, finish: () => (done = true) }, (a) => a, 'coach');
+    let tap = 0;
+    for (let T = 0; T < 90 && !done; T += PARTY_DT) {
+      tap = (tap + 1) % 90;
+      const mate = w.teamBros(0)[2];
+      const opp = w.teamBros(1)[1];
+      const gx = w.goalX(0);
+      const at = (x: number, z: number) => ({ aimPX: x, aimPZ: z });
+      let inp: PartyInput = NO_INPUT;
+      const ours = w.holder?.team === 0;
+      if (step === 1) inp = { ...NO_INPUT, ...at(mate.position().x, mate.position().z), pass: ours && tap < 3 };
+      else if (step === 2 || step === 5) inp = { ...NO_INPUT, ...at(gx, 2), kick: ours && tap < 30, power: 0.7 };
+      else if (step === 3) inp = { ...NO_INPUT, ...at(mate.position().x, mate.position().z), lob: ours && tap < 3 };
+      else if (step === 4) inp = { ...NO_INPUT, ...at(opp.position().x, opp.position().z), kick: tap < 3 };
+      tut.preStep(PARTY_DT);
+      w.step(PARTY_DT, inp);
+      tut.onEvents(w.events);
+      w.events.length = 0;
+    }
+    expect(done).toBe(true);
+  }, 30000);
+
   it('the tutorial can be played through', async () => {
     const w = await PartyWorld.create({ humanTeam: 0, size: 3, matchLength: 1e6, seed: 3, difficulty: 'easy', events: false, autoSwitch: true });
     let step = 0, done = false;

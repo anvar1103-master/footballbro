@@ -1,7 +1,7 @@
 import { Vector3 } from 'three';
 import { BRO, Bro } from './bro';
 import type { PartyWorld } from './world';
-import { ARENA } from './world';
+import { ARENA, FORMATIONS } from './world';
 
 /**
  * Bean AI. Each team has a chaser (best placed to reach the ball), a back bean that guards the
@@ -118,8 +118,33 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
   const mates = w.teamBros(b.team);
   const R = BRO.radius + w.ballR;
   m.sprint = false;
+  const tac = w.teams[b.team].tactic;
 
-  if (chaser === b) {
+  // coach orders: run to a point / go and press an opponent
+  const ro = w.runOrders.get(b);
+  if (ro && b.role !== 'GK') {
+    ro.t -= sk.react;
+    const tg = ro.target;
+    if (ro.t <= 0 || (tg && (w.holder !== tg || tg.state !== 'up')) || (!tg && w.holder === b)) w.runOrders.delete(b);
+    else {
+      m.role = 'support';
+      m.sprint = true;
+      if (tg) {
+        const hp = tg.position();
+        m.target.set(hp.x, 0, hp.z);
+        const dh = Math.hypot(hp.x - p.x, hp.z - p.z);
+        b.face.set(hp.x - p.x, 0, hp.z - p.z).normalize();
+        if (dh < 2.4 && dh > 0.9) pendingDive.add(b);
+      } else m.target.set(ro.x, 0, ro.z);
+      return;
+    }
+  }
+  // pressing: how far up the pitch the chaser goes after an opponent with the ball
+  const oppBall = !!w.holder && w.holder.team !== b.team;
+  const prog = dir * bp.x; // how far the ball is towards THEIR goal
+  const pressOff = oppBall && ((tac.press === 0 && prog > 2) || (tac.press === 1 && prog > 11));
+
+  if (chaser === b && !pressOff) {
     m.role = 'chase';
     m.sprint = true;
     const holder = w.holder;
@@ -165,6 +190,11 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
       const gk = w.teamBros(1 - b.team).find((q) => q.role === 'GK');
       const corner = -Math.sign((gk?.position().z ?? 0) - bp.z * 0.2 || w.rng.next() - 0.5) * (ARENA.goalHalfW - 0.5) * (0.6 + 0.4 * sk.aim);
       const airborne = bp.y - w.ballR > 0.25;
+      if (w.coachWaits(b)) {
+        // coach mode: dribble on and wait for the order (an occasional skill move when someone is in the way)
+        if (blocked && w.holder === b && w.rng.next() < 0.08 * sk.aggro) w.doSkill(b, new Vector3(-b.face.z, 0, b.face.x).multiplyScalar(w.rng.chance(0.5) ? 1 : -1));
+        return;
+      }
       if (airborne && distGoal < 20 && w.rng.next() < 0.6) {
         // volley / overhead kick
         w.smartKick(b, 0.8, new Vector3(gx - bp.x, 0, corner - bp.z));
@@ -209,10 +239,22 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
   const i = Math.max(0, sup.indexOf(b));
   const n = Math.max(1, sup.length);
   const attacking = (w.holder?.team ?? w.lastTouch?.team ?? b.team) === b.team;
-  const ahead = attacking ? 7 : -3;
-  const x = Math.max(-ARENA.length / 2 + 4, Math.min(ARENA.length / 2 - 4, bp.x + dir * ahead));
-  const lane = n === 1 ? -Math.sign(bp.z || 1) * 6 : -9 + (18 * i) / (n - 1);
-  m.target.set(x, 0, lane);
+  // the formation: each field player has a slot; the whole block slides with the ball, the style decides how far
+  const field = mates.filter((q) => q.role !== 'GK');
+  const slots = FORMATIONS[Math.max(2, Math.min(4, field.length))]?.[tac.formation] ?? Object.values(FORMATIONS[Math.max(2, Math.min(4, field.length))] ?? {})[0];
+  const slot = slots?.[Math.max(0, field.indexOf(b))] ?? [0.5, n === 1 ? 0 : -1 + (2 * i) / (n - 1)];
+  const L = ARENA.length;
+  const push = attacking ? { pass: 5, counter: 1, all: 10 }[tac.style] : -{ pass: 4, counter: 9, all: 1 }[tac.style];
+  let tprog = (slot[0] - 0.5) * L * 0.62 + prog * 0.5 + push;
+  tprog = Math.max(-L / 2 + 4, Math.min(L / 2 - 3, tprog));
+  const lane = slot[1] * (ARENA.width / 2 - 3.5) * (attacking ? 1 : 0.75) + bp.z * 0.2;
+  m.target.set(dir * tprog, 0, lane);
+  // high press: the second man goes for the carrier too
+  if (oppBall && tac.press === 2 && prog < 6) {
+    const hp = w.holder!.position();
+    const others = field.filter((q) => q !== chaser).sort((a, c) => a.position().distanceTo(hp) - c.position().distanceTo(hp));
+    if (others[0] === b) m.target.set(hp.x - dir * 1.5, 0, hp.z);
+  }
   if (attacking) {
     // get open: of a few spots around the lane, take the one farthest from the opponents with a clear passing line
     const opp = w.teamBros(1 - b.team).map((o) => o.position());
@@ -240,7 +282,7 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
   // a loose ball close by: go for it too
   if (!w.holder && Math.hypot(bp.x - p.x, bp.z - p.z) < 3) m.target.set(bp.x, 0, bp.z);
   m.sprint = Math.hypot(m.target.x - p.x, m.target.z - p.z) > 6;
-  if (w.inReach(b) && w.holder === b) {
+  if (w.inReach(b) && w.holder === b && !w.coachWaits(b)) {
     const mate = w.bestMate(b, true);
     if (Math.abs(gx - bp.x) < 15) w.shoot(b, 0.7);
     else if (mate) w.passTo(b, mate);

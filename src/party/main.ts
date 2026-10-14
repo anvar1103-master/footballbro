@@ -4,8 +4,9 @@ import * as THREE from 'three';
 import { Sound } from '../audio/sound';
 import { settings, Quality } from '../settings';
 import { TEAM_PRESETS, TeamInfo } from '../sim/team';
-import { EVENT_INFO, EventKind, NO_INPUT, PARTY_DT, PartyInput, PartyWorld } from './world';
+import { EVENT_INFO, FORMATIONS, PRESS_INFO, STYLE_INFO, Style, Tactic, EventKind, NO_INPUT, PARTY_DT, PartyInput, PartyWorld } from './world';
 import { PartyRenderer } from './view';
+import { ARENA } from './world';
 import { Tutorial } from './tutorial';
 
 /**
@@ -20,9 +21,18 @@ const uiEl = document.getElementById('ui')!;
 const sound = new Sound();
 
 // ---------------- input ----------------
-type Layout = 'mouseonly' | 'mouse' | 'keys';
+type Layout = 'coach' | 'mouseonly' | 'mouse' | 'keys';
 type Act = 'up' | 'down' | 'left' | 'right' | 'sprint' | 'jump' | 'kick' | 'pass' | 'lob' | 'tackle' | 'grab' | 'switch' | 'skill';
 const LAYOUTS: Record<Layout, { name: string; keys: Record<Act, string[]> }> = {
+  // coach: the team plays by itself; you click where the ball goes (LMB pass, RMB shot, Space / wheel-click lob)
+  coach: {
+    name: 'Тренер',
+    keys: {
+      up: [], down: [], left: [], right: [], sprint: [], jump: [],
+      pass: ['Mouse0'], kick: ['Mouse2'], lob: ['Space', 'Mouse1'],
+      skill: ['Wheel', 'KeyF'], tackle: [], grab: [], switch: [],
+    },
+  },
   // mouse only: the player runs to the cursor, LMB pass / RMB shot to the clicked point (team-mates play by themselves)
   mouseonly: {
     name: 'Только мышь',
@@ -52,11 +62,39 @@ const LAYOUTS: Record<Layout, { name: string; keys: Record<Act, string[]> }> = {
     },
   },
 };
-let layout: Layout = 'mouseonly';
-const opts = { size: 4, length: 180, difficulty: 'normal' as 'easy' | 'normal' | 'hard', autoSwitch: true, hints: true };
+let layout: Layout = 'coach';
+const opts = {
+  size: 4,
+  length: 180,
+  difficulty: 'normal' as 'easy' | 'normal' | 'hard',
+  autoSwitch: true,
+  hints: true,
+  /** tactics (formation per team size) */
+  formations: {} as Record<string, string>,
+  style: 'pass' as Style,
+  press: 1,
+};
+/** the three ways to play (names in the menu) */
+const MODES: [Layout | 'classic', string, string][] = [
+  ['coach', 'Тренер', 'команда играет сама — ты кликаешь, куда пас и удар'],
+  ['mouseonly', 'Капитан', 'ведёшь игрока мышкой, клик — пас и удар'],
+  ['classic', 'Футболист', 'полный контроль с клавиатуры'],
+];
+const modeOf = (l: Layout) => (l === 'mouse' || l === 'keys' ? 'classic' : l);
+const formationsFor = (size: number) => Object.keys(FORMATIONS[Math.max(2, Math.min(4, size - 1))]);
+function myTactic(size: number): Tactic {
+  const list = formationsFor(size);
+  const f = opts.formations[size] && list.includes(opts.formations[size]) ? opts.formations[size] : list[0];
+  return { formation: f, style: opts.style, press: opts.press };
+}
+function aiTactic(size: number): Tactic {
+  const list = formationsFor(size);
+  const styles: Style[] = ['pass', 'counter', 'all'];
+  return { formation: list[Math.floor(Math.random() * list.length)], style: styles[Math.floor(Math.random() * 3)], press: Math.floor(Math.random() * 3) };
+}
 let tutorialDone = false;
 try {
-  const l = localStorage.getItem('footballbro.layout4') as Layout | null;
+  const l = localStorage.getItem('footballbro.layout5') as Layout | null;
   if (l && l in LAYOUTS) layout = l;
   Object.assign(opts, JSON.parse(localStorage.getItem('footballbro.bean.opts') ?? '{}'));
   tutorialDone = localStorage.getItem('footballbro.tutorial') === '1';
@@ -86,11 +124,15 @@ gameEl.addEventListener('contextmenu', (e) => e.preventDefault());
 window.addEventListener('contextmenu', (e) => {
   if (mouseOn()) e.preventDefault();
 });
+/** when the current mouse-button hold began (coach slow-mo, shot power) */
+let holdStart = 0, rmbStart = 0, lastPower = 0;
 window.addEventListener('mousedown', (e) => {
   presses.push('Click');
   if (!mouseOn()) return;
   if ((e.target as HTMLElement).closest('button')) return;
   const code = 'Mouse' + e.button;
+  if (!keys.has('Mouse0') && !keys.has('Mouse1') && !keys.has('Mouse2')) holdStart = performance.now();
+  if (e.button === 2) rmbStart = performance.now();
   keys.add(code);
   presses.push(code);
   device = 'mouse';
@@ -119,7 +161,25 @@ window.addEventListener(
 /** the cursor aims only while the mouse is actually in use (moved lately or clicked last) */
 const mouseAim = () => mouseOn() && mouseX >= 0 && (layout === 'mouseonly' || device === 'mouse' || performance.now() - lastMouseMove < 2500);
 
-function readInput(cam: { forward(): THREE.Vector3 }, aim: { dir: THREE.Vector3; dist: number } | null): PartyInput {
+function readInput(cam: { forward(): THREE.Vector3 }, aim: { dir: THREE.Vector3; dist: number } | null, pt: THREE.Vector3 | null = null): PartyInput {
+  if (layout === 'coach') {
+    const k = LAYOUTS.coach.keys;
+    const h = (a: Act) => k[a].some((c) => keys.has(c));
+    const shift = keys.has('ShiftLeft') || keys.has('ShiftRight');
+    if (keys.has('Mouse2')) lastPower = Math.min(1, (performance.now() - rmbStart) / 900);
+    const power = lastPower;
+    return {
+      ...NO_INPUT,
+      pass: h('pass') && !shift,
+      run: h('pass') && shift,
+      kick: h('kick'),
+      lob: h('lob'),
+      skill: h('skill'),
+      power,
+      aimPX: pt?.x,
+      aimPZ: pt?.z,
+    };
+  }
   const k = LAYOUTS[layout].keys;
   const h = (a: Act) => k[a].some((c) => keys.has(c));
   const sx = (h('right') ? 1 : 0) - (h('left') ? 1 : 0);
@@ -152,6 +212,7 @@ const kl = (a: Act) => [...new Set(LAYOUTS[layout].keys[a].map(label))].join('/'
 /** the one binding to show in prompts: the mouse button or the key, whichever the player uses */
 const key1 = (a: Act) => {
   const all = LAYOUTS[layout].keys[a];
+  if (!all.length) return '';
   const m = all.find((c) => c.startsWith('Mouse'));
   const kb = all.find((c) => !c.startsWith('Mouse'));
   return label((device === 'mouse' && m) || kb || all[0]);
@@ -239,6 +300,8 @@ class Session {
       <div class="bb-hint">${
         mode === 'watch'
           ? 'Режим наблюдения · V камера · Esc пауза'
+          : layout === 'coach'
+          ? `<b>ЛКМ</b> пас в точку · <b>ПКМ</b> удар в точку (держи — сильнее; по сопернику — прессинг) · <b>Пробел</b> навес · <b>Shift+ЛКМ</b> рывок · держи кнопку — замедление · <b>Esc</b> пауза и тактика`
           : layout === 'mouseonly'
           ? `<b>Курсор</b> бег · <b>ЛКМ</b> пас в точку · <b>ПКМ</b> удар в точку (держи) · <b>Колёсико/Пробел</b> финт · <b>Клик колёсиком</b> навес · <b>V</b> камера · <b>Esc</b> пауза`
           : `<b>${layout === 'mouse' ? 'WASD' : '←↑↓→'}</b> бег · <b>${key1('pass')}</b> пас · <b>${key1('kick')}</b> удар (держи) · <b>${kl('sprint')}</b> спринт · <b>${key1('skill')}</b> финт · <b>${key1('lob')}</b> навес · <b>${kl('jump')}</b> прыжок · <b>V</b> камера · <b>Esc</b> пауза`
@@ -274,7 +337,7 @@ class Session {
           sound.chime(3);
         },
         finish: () => this.tutorialOver(),
-      }, key1, layout === 'mouseonly');
+      }, key1, layout === 'coach' ? 'coach' : layout === 'mouseonly' ? 'captain' : 'player');
     } else this.showCount('3');
     this.loop = this.loop.bind(this);
     this.raf = requestAnimationFrame(this.loop);
@@ -440,7 +503,16 @@ class Session {
       const p = c.position();
       const bp = w.ballPos();
       const fire = w.teams[c.team].fire >= 1;
-      if (h && h.team !== c.team) {
+      if (layout === 'coach') {
+        const dGoal = Math.hypot(w.goalX(c.team) - bp.x, bp.z);
+        const pt = w.passTarget;
+        if (h && h.team !== c.team) html = chip('kick', 'по сопернику — прессинг', true) + `<span><b>Shift+ЛКМ</b>рывок</span>`;
+        else
+          html =
+            chip('pass', pt ? `пас → ${pt.name}` : 'пас в точку') +
+            chip('kick', fire ? '🔥 огненный удар' : 'удар в точку', fire || dGoal < 24) +
+            `<span><b>Пробел</b>навес</span>`;
+      } else if (h && h.team !== c.team) {
         const hp = h.position();
         const d = Math.hypot(hp.x - p.x, hp.z - p.z);
         html = d < 4.5 ? chip('kick', 'подкат', true) + chip('grab', 'схватить') : w.switchTarget ? chip('pass', layout === 'mouseonly' ? 'рывок' : 'сменить игрока') : '';
@@ -512,9 +584,22 @@ class Session {
         }
       }
     }
-    const inp = this.watch ? NO_INPUT : readInput(this.gfx.cam, aim);
-    // slow motion right after a goal / a fire shot
-    const slow = w.slowmo > 0 ? 0.35 : 1;
+    let pt: THREE.Vector3 | null = null;
+    if (layout === 'coach' && mouseOn() && mouseX >= 0) {
+      pt = this.gfx.pickGround(mouseX, mouseY);
+      if (pt) {
+        pt.x = THREE.MathUtils.clamp(pt.x, -ARENA.length / 2 - 1, ARENA.length / 2 + 1);
+        pt.z = THREE.MathUtils.clamp(pt.z, -ARENA.width / 2, ARENA.width / 2);
+        this.gfx.aimPoint = pt;
+      }
+    }
+    const inp = this.watch ? NO_INPUT : readInput(this.gfx.cam, aim, pt);
+    // slow motion right after a goal / a fire shot, and while the coach holds a button to aim
+    const aiming = layout === 'coach' && this.mode !== 'watch' && w.phase === 'play' && (keys.has('Mouse0') || keys.has('Mouse1') || keys.has('Mouse2') || keys.has('Space'));
+    if (!aiming) holdStart = performance.now();
+    const aimSlow = aiming && performance.now() - holdStart < 2500 ? 0.3 : 1;
+    this.hud.classList.toggle('aiming', aimSlow < 1);
+    const slow = Math.min(w.slowmo > 0 ? 0.35 : 1, aimSlow);
     this.acc += dt * this.speed * slow;
     while (this.acc >= PARTY_DT) {
       this.tutorial?.preStep(PARTY_DT);
@@ -558,7 +643,7 @@ class Session {
       const s = this.gfx.project(c.position().add(new THREE.Vector3(0, 1.45, 0)));
       this.tag.style.display = s.visible ? 'flex' : 'none';
       this.tag.style.transform = `translate(${Math.round(s.x)}px, ${Math.round(s.y)}px) translate(-50%, -100%)`;
-      (this.tag.querySelector('.bb-name') as HTMLElement).textContent = c.state === 'up' ? (c.grabbing ? 'ДЕРЖУ!' : w.grabbedBy(c) ? 'ПУСТИ!' : 'ТЫ') : 'ОЙ…';
+      (this.tag.querySelector('.bb-name') as HTMLElement).textContent = c.state === 'up' ? (c.grabbing ? 'ДЕРЖУ!' : w.grabbedBy(c) ? 'ПУСТИ!' : layout === 'coach' ? c.name : 'ТЫ') : 'ОЙ…';
       const pw = this.tag.querySelector('.bb-power') as HTMLElement;
       pw.style.visibility = c.charging ? 'visible' : 'hidden';
       (pw.firstElementChild as HTMLElement).style.width = `${Math.round(Math.min(1, c.kickCharge / 0.8) * 100)}%`;
@@ -584,7 +669,7 @@ class Session {
     }
     // who the switch key would take over
     const st = w.switchTarget;
-    if (st && !this.watch && w.phase !== 'over' && this.mode !== 'tutorial') {
+    if (st && !this.watch && w.phase !== 'over' && this.mode !== 'tutorial' && layout !== 'coach') {
       const s = this.gfx.project(st.position().add(new THREE.Vector3(0, 1.45, 0)));
       this.sw.style.display = s.visible ? 'block' : 'none';
       this.sw.textContent = key1('switch');
@@ -639,9 +724,33 @@ class Session {
     if (this.paused) {
       const o = document.createElement('div');
       o.className = 'overlay';
-      o.innerHTML = `<div class="panel bb-panel"><h2>Пауза</h2><div class="row"><button class="btn big" data-a="resume">Продолжить</button></div>
+      const me = this.w.humanTeam >= 0 ? this.w.teams[this.w.humanTeam] : null;
+      const tacUI = () => {
+        if (!me) return '';
+        const t = me.tactic;
+        const seg = (key: string, items: [string | number, string][], cur: string | number) =>
+          `<div class="seg">${items.map(([v, l]) => `<button data-t="${key}" data-v="${v}" class="${v === cur ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+        return `<div class="bb-tactics">
+          <div class="opt"><div class="label">Схема</div>${seg('formation', formationsFor(this.w.opts.size).map((f) => [f, f]), t.formation)}</div>
+          <div class="opt"><div class="label">Стиль</div>${seg('style', (Object.keys(STYLE_INFO) as Style[]).map((k) => [k, STYLE_INFO[k]]), t.style)}</div>
+          <div class="opt"><div class="label">Прессинг</div>${seg('press', PRESS_INFO.map((n, i) => [i, n]), t.press)}</div></div>`;
+      };
+      const draw = () => {
+        o.innerHTML = `<div class="panel bb-panel"><h2>Пауза</h2>${tacUI()}<div class="row"><button class="btn big" data-a="resume">Продолжить</button></div>
         <div class="row" style="margin-top:12px"><button class="btn" data-a="again">Заново (R)</button><button class="btn" data-a="menu">В меню</button></div></div>`;
+      };
+      draw();
       o.addEventListener('click', (e) => {
+        const tb = (e.target as HTMLElement).closest('button') as HTMLElement | null;
+        if (tb?.dataset.t && me) {
+          const v = tb.dataset.v!;
+          if (tb.dataset.t === 'formation') me.tactic.formation = opts.formations[this.w.opts.size] = v;
+          if (tb.dataset.t === 'style') me.tactic.style = opts.style = v as Style;
+          if (tb.dataset.t === 'press') me.tactic.press = opts.press = Number(v);
+          save();
+          draw();
+          return;
+        }
         const act = (e.target as HTMLElement).dataset.a;
         if (act === 'resume') this.togglePause();
         if (act === 'again') start(this.mode);
@@ -666,11 +775,21 @@ async function start(mode: Mode) {
   const teams = pickTeams();
   const params = new URLSearchParams(location.search);
   let w: PartyWorld;
-  if (mode === 'tutorial') w = await PartyWorld.create({ humanTeam: 0, size: 3, matchLength: 1e6, teams, difficulty: 'easy', events: false, autoSwitch: true });
+  const coach = layout === 'coach';
+  if (mode === 'tutorial') w = await PartyWorld.create({ humanTeam: 0, size: 3, matchLength: 1e6, teams, difficulty: 'easy', events: false, autoSwitch: true, coach });
   else {
     const size = Number(params.get('size') ?? opts.size);
     const length = Number(params.get('len') ?? opts.length);
-    w = await PartyWorld.create({ humanTeam: mode === 'watch' ? -1 : 0, size, matchLength: length, teams, difficulty: opts.difficulty, autoSwitch: opts.autoSwitch });
+    w = await PartyWorld.create({
+      humanTeam: mode === 'watch' ? -1 : 0,
+      size,
+      matchLength: length,
+      teams,
+      difficulty: opts.difficulty,
+      autoSwitch: opts.autoSwitch,
+      coach: coach && mode !== 'watch',
+      tactics: [mode === 'watch' ? aiTactic(size) : myTactic(size), aiTactic(size)],
+    });
   }
   session = new Session(w, mode);
 }
@@ -683,7 +802,7 @@ function toMenu() {
 function save() {
   try {
     localStorage.setItem('footballbro.bean.opts', JSON.stringify(opts));
-    localStorage.setItem('footballbro.layout4', layout);
+    localStorage.setItem('footballbro.layout5', layout);
   } catch {
     /* ignore */
   }
@@ -698,6 +817,8 @@ function showMenu() {
   const render = () => {
     const mouse = layout !== 'keys';
     const only = layout === 'mouseonly';
+    const coachM = layout === 'coach';
+    const mode = modeOf(layout);
     el.innerHTML = `<div class="menu-card bb-card">
       <div class="bb-logo">FOOTBALL<span>BRO</span></div>
       <div class="bb-tag-line">Угарный футбол краш-тест манекенов · финты, удары через себя, подкаты и огненные удары</div>
@@ -705,9 +826,17 @@ function showMenu() {
         <button class="btn big bb-play" id="play">ИГРАТЬ</button>
         <button class="btn big bb-learn ${tutorialDone ? '' : 'new'}" id="learn">ОБУЧЕНИЕ${tutorialDone ? '' : '<em>новичкам</em>'}</button>
       </div>
+      <div class="bb-modes">${MODES.map(
+        ([k, n, sub]) => `<button data-k="mode" data-v="${k}" class="${mode === k ? 'on' : ''}"><b>${n}</b><small>${sub}</small></button>`,
+      ).join('')}</div>
       <div class="bb-keys">
         ${
-          only
+          coachM
+            ? tile('ЛКМ', 'пас', 'в точку клика · Shift+ЛКМ — рывок партнёра') +
+              tile('ПКМ', 'удар', 'в точку, держи — сильнее · по сопернику — прессинг') +
+              tile('Пробел', 'навес', 'в точку · колёсико — финт') +
+              tile('Держи', 'замедление', 'пока кнопка зажата, время замедляется — целься спокойно')
+            : only
             ? tile('🖱 Курсор', 'бег', 'игрок бежит к курсору, далеко — быстрее') +
               tile('ЛКМ', 'пас', 'в точку клика · без мяча — рывок') +
               tile('ПКМ', 'удар', 'в точку клика, держи — сильнее · без мяча — подкат') +
@@ -723,19 +852,25 @@ function showMenu() {
         <div class="opt"><div class="label">Команды</div>${seg('size', [[3, '3×3'], [4, '4×4'], [5, '5×5']], opts.size)}</div>
         <div class="opt"><div class="label">Матч</div>${seg('length', [[120, '2 мин'], [180, '3 мин'], [300, '5 мин']], opts.length)}</div>
         <div class="opt"><div class="label">Соперники</div>${seg('difficulty', [['easy', 'Сонные'], ['normal', 'Бодрые'], ['hard', 'Злые']], opts.difficulty)}</div>
-        <div class="opt"><div class="label">Управление</div>${seg('layout', (Object.keys(LAYOUTS) as Layout[]).map((k) => [k, LAYOUTS[k].name]), layout)}</div>
+        ${mode === 'classic' ? `<div class="opt"><div class="label">Раскладка</div>${seg('layout', [['mouse', 'Мышь + клавиатура'], ['keys', 'Только клавиатура']], layout)}</div>` : ''}
+        <div class="opt"><div class="label">Схема</div>${seg('formation', formationsFor(opts.size).map((f) => [f, f]), myTactic(opts.size).formation)}</div>
+        <div class="opt"><div class="label">Стиль</div>${seg('style', (Object.keys(STYLE_INFO) as Style[]).map((k) => [k, STYLE_INFO[k]]), opts.style)}</div>
+        <div class="opt"><div class="label">Прессинг</div>${seg('press', PRESS_INFO.map((n, i) => [i, n]), opts.press)}</div>
         <div class="opt"><div class="label">Подсказки</div>${seg('hints', [['on', 'Вкл'], ['off', 'Выкл']], opts.hints ? 'on' : 'off')}</div>
-        <div class="opt"><div class="label">Автосмена игрока</div>${seg('auto', [['on', 'Вкл'], ['off', 'Выкл']], opts.autoSwitch ? 'on' : 'off')}</div>
+        ${coachM ? '' : `<div class="opt"><div class="label">Автосмена игрока</div>${seg('auto', [['on', 'Вкл'], ['off', 'Выкл']], opts.autoSwitch ? 'on' : 'off')}</div>`}
       </div>
       <div class="controls bb-controls">
         ${
-          only
+          coachM
+            ? `<div>Ты — тренер на бровке и мозг команды: игроки сами бегают, открываются и отбирают мяч по твоей тактике. Тот, у кого мяч, ведёт его и ждёт команды — кликни, куда отдать пас или ударить. Можно скомандовать заранее, пока мяч ещё летит к партнёру.</div>`
+            : only
             ? `<div>Партнёры бегают и открываются сами — ты управляешь только тем, кто ближе к мячу. Кликай туда, куда отдать пас или ударить.</div>`
             : mouse
             ? `<div><b>Курсор</b> на поле — куда пасовать и бить (или <b>J</b> пас, <b>K</b> удар — тогда бьёт по воротам сам)</div>`
             : `<div><b>Стрелки</b> — бег, удар сам летит в угол ворот, куда жмёшь стрелку</div>`
         }
-        <div><b>${kl('tackle')}</b> подкат · <b>${kl('grab')}</b> схватить за майку · <b>${kl('switch')}</b> смена игрока</div>
+        ${mode === 'classic' ? `<div><b>${kl('tackle')}</b> подкат · <b>${kl('grab')}</b> схватить за майку · <b>${kl('switch')}</b> смена игрока</div>` : ''}
+        <div><b>Схема</b> — расстановка (защитники-полузащитники-нападающие), <b>Стиль</b>: Пасы — открываются в короткую, Контратака — сидят у своих ворот и убегают вперёд, Навал — все в атаку. <b>Прессинг</b> — как высоко отбирают мяч</div>
         <div>Мимо штанги — мяч закрутит в ворота. Мяч в воздухе — удар с лёта, через себя или головой</div>
         <div><b>V</b> камера · <b>Esc</b> пауза · <b>M</b> звук</div>
       </div>
@@ -754,10 +889,13 @@ function showMenu() {
       if (k === 'size') opts.size = Number(v);
       if (k === 'length') opts.length = Number(v);
       if (k === 'difficulty') opts.difficulty = v as typeof opts.difficulty;
-      if (k === 'layout') {
-        layout = v as Layout;
+      if (k === 'layout' || k === 'mode') {
+        layout = v === 'classic' ? (modeOf(layout) === 'classic' ? layout : 'mouse') : (v as Layout);
         device = layout === 'keys' ? 'keys' : 'mouse';
       }
+      if (k === 'formation') opts.formations[opts.size] = v;
+      if (k === 'style') opts.style = v as Style;
+      if (k === 'press') opts.press = Number(v);
       if (k === 'auto') opts.autoSwitch = v === 'on';
       if (k === 'hints') opts.hints = v === 'on';
       save();

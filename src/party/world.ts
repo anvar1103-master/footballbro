@@ -65,6 +65,12 @@ export interface PartyInput {
   aimDist?: number;
   /** mouse-only mode: pass without the ball = a dash to the cursor, incoming passes are met automatically */
   mouseOnly?: boolean;
+  /** coach mode: the cursor point on the pitch (absolute) and the shot power picked by holding the button */
+  aimPX?: number;
+  aimPZ?: number;
+  power?: number;
+  /** coach mode: "run there" order (Shift + LMB) */
+  run?: boolean;
 }
 export const NO_INPUT: PartyInput = { mx: 0, mz: 0, sprint: false, jump: false, kick: false, pass: false, lob: false, tackle: false, grab: false, switch: false, skill: false, aimX: 0, aimZ: 0 };
 /** indoor hall: walls go up to the roof, so the ball never leaves */
@@ -95,6 +101,26 @@ export interface PartyEvent {
   text?: string;
 }
 
+/** team tactics: formation slots (x 0 = own goal .. 1 = their goal, z -1..1 across), style and pressing */
+export type Style = 'pass' | 'counter' | 'all';
+export interface Tactic {
+  formation: string;
+  style: Style;
+  /** 0 low, 1 mid, 2 high */
+  press: number;
+}
+export const FORMATIONS: Record<number, Record<string, [number, number][]>> = {
+  2: { '1-1': [[0.3, 0], [0.66, 0]], '2': [[0.45, -0.6], [0.45, 0.6]] },
+  3: { '1-2': [[0.3, 0], [0.62, -0.6], [0.62, 0.6]], '2-1': [[0.3, -0.5], [0.3, 0.5], [0.68, 0]], '1-1-1': [[0.25, 0], [0.5, 0.15], [0.72, -0.1]] },
+  4: { '1-2-1': [[0.25, 0], [0.48, -0.7], [0.48, 0.7], [0.72, 0]], '2-2': [[0.3, -0.5], [0.3, 0.5], [0.65, -0.5], [0.65, 0.5]], '3-1': [[0.28, -0.7], [0.28, 0], [0.28, 0.7], [0.68, 0]], '1-1-2': [[0.25, 0], [0.48, 0], [0.7, -0.55], [0.7, 0.55]] },
+};
+export const STYLE_INFO: Record<Style, string> = { pass: 'Пасы', counter: 'Контратака', all: 'Навал' };
+export const PRESS_INFO = ['Низкий', 'Средний', 'Высокий'];
+export function defaultTactic(size: number): Tactic {
+  const f = FORMATIONS[Math.max(2, Math.min(4, size - 1))];
+  return { formation: Object.keys(f)[0], style: 'pass', press: 1 };
+}
+
 export interface Team {
   index: number;
   info: TeamInfo;
@@ -105,6 +131,7 @@ export interface Team {
   fire: number;
   /** completed passes in a row */
   combo: number;
+  tactic: Tactic;
 }
 
 export interface WorldOpts {
@@ -120,6 +147,10 @@ export interface WorldOpts {
   events?: boolean;
   /** control jumps to a teammate who gets the ball (default on) */
   autoSwitch?: boolean;
+  /** coach mode: the human's whole team plays by itself, the human only orders passes / shots / runs */
+  coach?: boolean;
+  /** tactics for the two teams */
+  tactics?: [Tactic?, Tactic?];
 }
 
 export type Phase = 'countdown' | 'play' | 'goal' | 'over';
@@ -175,6 +206,12 @@ export class PartyWorld {
   passTarget: Bro | null = null;
   /** a fire shot in flight: burns through anyone in its way */
   fireBall: { team: number; t: number; shooter: Bro } | null = null;
+  /** coach mode: a pending order (executed by whoever of ours plays the ball next) */
+  order: { kind: 'pass' | 'kick' | 'lob' | 'skill'; x: number; z: number; power: number; t: number } | null = null;
+  /** coach mode: players sent somewhere ("run there") or at an opponent ("press him") */
+  runOrders = new Map<Bro, { x: number; z: number; target: Bro | null; t: number }>();
+  /** how long the current holder has had the ball */
+  holdT = 0;
   /** who played the last pass (to count completed passes) */
   private lastPasser: Bro | null = null;
   private preVel = new Vector3();
@@ -186,8 +223,8 @@ export class PartyWorld {
     this.humanTeam = opts.humanTeam;
     const infos = opts.teams ?? [TEAM_PRESETS[0], TEAM_PRESETS[1]];
     this.teams = [
-      { index: 0, info: infos[0], score: 0, dir: 1, fire: 0, combo: 0 },
-      { index: 1, info: infos[1], score: 0, dir: -1, fire: 0, combo: 0 },
+      { index: 0, info: infos[0], score: 0, dir: 1, fire: 0, combo: 0, tactic: opts.tactics?.[0] ?? defaultTactic(opts.size) },
+      { index: 1, info: infos[1], score: 0, dir: -1, fire: 0, combo: 0, tactic: opts.tactics?.[1] ?? defaultTactic(opts.size) },
     ];
   }
 
@@ -405,7 +442,9 @@ export class PartyWorld {
     }
 
     // --- control: human first (once per step), then the AI ---
-    const humanOk = this.controlled && this.phase !== 'countdown' && this.phase !== 'over';
+    const coach = !!this.opts.coach && this.humanTeam >= 0;
+    if (coach && this.phase !== 'countdown' && this.phase !== 'over') this.coachStep(input, dt);
+    const humanOk = !coach && this.controlled && this.phase !== 'countdown' && this.phase !== 'over';
     if (humanOk) this.human(this.controlled!, input, dt);
     if (this.phase !== 'countdown')
       for (const b of this.bros) {
@@ -420,7 +459,7 @@ export class PartyWorld {
     for (const b of this.bros) b.step(dt, this.world);
     this.ballForces(dt);
     if (this.phase === 'play') this.dribbleAssist(dt);
-    if (this.phase === 'play') this.autoSwitch();
+    if (this.phase === 'play' && !coach) this.autoSwitch();
     this.switchTarget = this.pickSwitch();
     if (this.sweeper.on) this.updateSweeper(dt);
     this.pendingHits.length = 0;
@@ -637,7 +676,8 @@ export class PartyWorld {
     if (best !== this.holder && best) {
       this.emit({ type: 'kick', pos: bp, strength: 2, team: best.team });
       this.gotBall(best);
-    }
+      this.holdT = 0;
+    } else this.holdT += dt;
     this.holder = best;
     if (!best) return;
     const p = best.position();
@@ -1416,6 +1456,129 @@ export class PartyWorld {
     }
     const m = this.bestMate(b, false, aim);
     return m && (this.coneTo(b, m, aim) > (mouse ? 0.8 : 0.35)) ? m : null;
+  }
+
+  // ---------------- coach mode ----------------
+  /** coach mode: the human's team plays by itself until it gets an order (true = the holder waits for one) */
+  coachWaits(b: Bro) {
+    return !!this.opts.coach && b.team === this.humanTeam && b.role !== 'GK' && this.holdT < 3;
+  }
+
+  /** who of the human's team plays the ball next: the holder, the keeper holding it, or whoever can reach it */
+  coachExecutor(): Bro | null {
+    const t = this.humanTeam;
+    if (this.holder?.team === t) return this.holder;
+    if (this.gkHold) return this.gkHold.gk.team === t ? this.gkHold.gk : null;
+    if (this.holder) return null;
+    const bp = this.ballPos();
+    let best: Bro | null = null;
+    let bd = 1e9;
+    for (const b of this.teamBros(t)) {
+      if (b.state !== 'up') continue;
+      const p = b.position();
+      const d = Math.hypot(bp.x - p.x, bp.z - p.z);
+      if (d < bd) {
+        bd = d;
+        best = b;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Coach mode: no direct control. Releasing a mouse button gives an order at the cursor point — pass (LMB),
+   * shot (RMB, power from how long it was held), lob (Space / wheel click), skill (wheel); it is carried out by
+   * the next player of ours who plays the ball (up to 1.2 s later, so it can be given before a pass arrives).
+   * Shift+LMB sends the nearest free player running to the point; RMB on an opponent with the ball sends the
+   * nearest player to press / tackle him.
+   */
+  private coachStep(input: PartyInput, dt: number) {
+    const prev = this.prevInput;
+    const ex = this.coachExecutor();
+    // the marker follows whoever is involved with the ball
+    const show = ex ?? this.teamBros(this.humanTeam).filter((b) => b.role !== 'GK').sort((a, b) => a.position().distanceTo(this.ballPos()) - b.position().distanceTo(this.ballPos()))[0] ?? null;
+    if (show) this.controlled = show;
+    const hasPt = input.aimPX !== undefined && input.aimPZ !== undefined;
+    const pt = new Vector3(input.aimPX ?? 0, 0, input.aimPZ ?? 0);
+    const c = this.controlled;
+    this.passTarget = ex && hasPt && this.phase === 'play' ? this.mateNear(ex, pt, 5) : null;
+    if (c) {
+      c.charging = input.kick && !input.run ? 'kick' : null;
+      c.kickCharge = (input.power ?? 0) * 0.8;
+    }
+    if (this.phase !== 'play' || !hasPt) return;
+    const released = (k: 'pass' | 'kick' | 'lob' | 'skill') => prev[k] && !input[k];
+    const ours = this.holder?.team === this.humanTeam || this.gkHold?.gk.team === this.humanTeam;
+    const opp = this.holder && this.holder.team !== this.humanTeam ? this.holder : null;
+    if (input.run && !prev.run) {
+      // send the nearest free field player there
+      let best: Bro | null = null;
+      let bd = 1e9;
+      for (const b of this.teamBros(this.humanTeam)) {
+        if (b.role === 'GK' || b === this.holder || b.state !== 'up') continue;
+        const d = b.position().distanceTo(pt);
+        if (d < bd) {
+          bd = d;
+          best = b;
+        }
+      }
+      if (best) {
+        this.runOrders.set(best, { x: pt.x, z: pt.z, target: null, t: 3 });
+        this.emit({ type: 'switch', pos: pt.clone(), team: this.humanTeam, text: 'run' });
+      }
+      return;
+    }
+    if (opp && released('kick')) {
+      // press the carrier: the nearest of ours goes for him (and slides in when close)
+      let best: Bro | null = null;
+      let bd = 1e9;
+      const op = opp.position();
+      for (const b of this.teamBros(this.humanTeam)) {
+        if (b.role === 'GK' || b.state !== 'up') continue;
+        const d = b.position().distanceTo(op);
+        if (d < bd) {
+          bd = d;
+          best = b;
+        }
+      }
+      if (best) {
+        this.runOrders.set(best, { x: op.x, z: op.z, target: opp, t: 2.5 });
+        this.emit({ type: 'switch', pos: op, team: this.humanTeam, text: 'press' });
+      }
+      return;
+    }
+    for (const k of ['pass', 'kick', 'lob', 'skill'] as const) {
+      if (released(k) || (k === 'skill' && input.skill && !prev.skill)) this.order = { kind: k, x: pt.x, z: pt.z, power: input.power ?? 0.5, t: 0 };
+    }
+    const o = this.order;
+    if (!o) return;
+    o.t += dt;
+    if (o.t > 1.2 || (!ours && this.holder)) {
+      this.order = null;
+      return;
+    }
+    if (!ex || !this.inReach(ex)) return;
+    this.order = null;
+    const bp = this.ballPos();
+    const p = ex.position();
+    const target = new Vector3(o.x, 0, o.z);
+    const dir = new Vector3(o.x - bp.x, 0, o.z - bp.z);
+    const dist = dir.length();
+    if (dist < 0.3) return;
+    dir.normalize();
+    if (o.kind === 'skill') {
+      this.doSkill(ex, dir);
+      return;
+    }
+    // face the ball so the kick connects
+    ex.face.set(bp.x - p.x, 0, bp.z - p.z).normalize();
+    if (o.kind === 'pass') {
+      const m = this.mateNear(ex, target, 5);
+      if (m) this.passTo(ex, m);
+      else this.passInto(ex, dir, Math.max(4, Math.min(30, dist)));
+    } else if (o.kind === 'kick') this.smartKick(ex, Math.max(0.3, o.power), dir);
+    else this.lob(ex, target);
+    ex.face.copy(dir);
   }
 
   // ---------------- the human bean ----------------
