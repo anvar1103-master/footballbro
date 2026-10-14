@@ -448,6 +448,30 @@ describe('bean ball', () => {
     }
   });
 
+  it('mouse only: without the ball LMB is a dash, an incoming pass is met automatically', async () => {
+    const { w, c, mate, park } = await sandbox(35);
+    w.ball.setTranslation({ x: 10, y: w.ballR, z: 8 });
+    run(w, 0.1);
+    w.step(PARTY_DT, { ...NO_INPUT, mouseOnly: true, pass: true, aimX: 1, aimZ: 0, aimDist: 6 });
+    expect(c.boost).toBeGreaterThan(0);
+    expect(w.controlled).toBe(c);
+    // a team-mate passes to us: even with the cursor pointing away we run to meet it
+    park([c, mate]);
+    w.release(c);
+    c.teleport(0, 0, 1);
+    mate.teleport(-8, 4, 1);
+    w.ball.setTranslation({ x: -5.5, y: w.ballR, z: 3.6 });
+    w.lastTouch = mate;
+    w.ball.setLinvel({ x: 9, y: 0, z: -2 });
+    let got = false;
+    for (let t = 0; t < 2.5 && !got; t += PARTY_DT) {
+      w.step(PARTY_DT, { ...NO_INPUT, mouseOnly: true, mx: 0, mz: 1, aimX: 0, aimZ: 1, aimDist: 0.5 });
+      park([c, mate]);
+      got = w.holder === c;
+    }
+    expect(got).toBe(true);
+  });
+
   it('the tutorial can be played through', async () => {
     const w = await PartyWorld.create({ humanTeam: 0, size: 3, matchLength: 1e6, seed: 3, difficulty: 'easy', events: false, autoSwitch: true });
     let step = 0, done = false;

@@ -19,6 +19,9 @@
   detailed models" → TV camera following the ball + x-ray ball / landing ring / trail, two main buttons with on-screen
   context prompts + pass-target ring, keyboard auto-aim, receive assist, tutorial, ОГОНЬ meter + fire shot, goal replays,
   detailed dummies, LED screens/boards, colour grading.
+  (6) keyboard still felt hard → user's idea: play (almost) only with the MOUSE, like Dota: the player runs to the cursor,
+  LMB = pass to the clicked point, RMB = shot to the clicked point, team-mates run and get open by themselves →
+  layout 'mouseonly' is the default (keyboard layouts kept as options).
 - **Soccerbro = the OLD FIFA-style game**, kept only as a library of ready code (ball physics, cloth net — the user likes
   the goal net —, ball texture, sounds, particles). `classic.html` → `src/main.ts`, `src/sim/`, `src/render/`, `src/ui/`.
   Old link: https://claude.ai/artifact/1pQLJehMiRup8dydP6x37b. Don't develop it further unless asked.
@@ -46,7 +49,7 @@ world.ts  — PartyWorld: ARENA 50×32 (also a FieldDims for GoalNet), walls up 
             autoSwitch, keepInside() clamps, keeperCatch, chaos (mega/lowgrav/ice/turbo/sweeper), golden goal.
             Tutorial hooks: scripted Map<Bro, fn> (called instead of the AI), skipCountdown(), placeBall().
             Input is WORLD-space (main.ts maps keys camera-relative).
-brain.ts  — AI: chaser (gets behind the ball, dribbles, shoots at the corner away from the keeper — from further out with a
+brain.ts  — AI: supporters of the team on the ball get open (pick the spot farthest from opponents with a clear line); chaser (gets behind the ball, dribbles, shoots at the corner away from the keeper — from further out with a
             full ОГОНЬ meter, volleys, skill moves, passes, lobs, tackles/grabs), keeper(), receivePoint (exported), supporters.
 tutorial.ts — Tutorial: 6 drills (run to ball, pass, shoot, tackle, skill, fire shot) on a size-3 world; places players
             (others idle via w.scripted), checks world events, resets on failure; UI callbacks show/praise/finish.
@@ -67,7 +70,10 @@ view.ts   — ChaseCamera: mode 0 TV (default; side = attack dir, follows the ba
 main.ts   — menu (ИГРАТЬ / ОБУЧЕНИЕ, 4 control tiles, ОГОНЬ help, teams, length, difficulty, layout, hints, auto-switch),
             HUD (bean.css: score + ОГОНЬ bars, prompts chips under the player tag, flash, ПОВТОР + cinema bars, coach card),
             Session(mode match|watch|tutorial), sounds (fire boom, chimes), events → toasts/banners.
-            Layouts: 'mouse' (default: WASD/arrows, LMB/J pass, RMB/K shot, MMB/C/L lob, F skill, E tackle, R grab, Q switch,
+            Layouts: 'mouseonly' (DEFAULT: the controlled player runs to the cursor — walk near it, sprint when > 7 m away;
+            LMB pass / RMB shot to the cursor point, wheel scroll or Space = skill, wheel click = lob, E jump; without the
+            ball LMB = dash (Bro.boost) and RMB near the carrier = slide; PartyInput.mouseOnly also makes incoming
+            passes met automatically even while the cursor points elsewhere), 'mouse' ( WASD/arrows, LMB/J pass, RMB/K shot, MMB/C/L lob, F skill, E tackle, R grab, Q switch,
             Space jump, Shift sprint) and 'keys' (arrows, S pass, D shot, A lob, W/F skill). Cursor aim only while the mouse
             is in use (moved < 2.5 s ago or a mouse button was used last); J/K/L switch prompts to key labels.
             pickTeams(): two kits far apart in sRGB, never the yellow SUN kit (dummies are yellow).

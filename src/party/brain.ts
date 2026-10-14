@@ -213,6 +213,30 @@ function decide(w: PartyWorld, b: Bro, m: Mind, sk: (typeof SKILL)['normal']) {
   const x = Math.max(-ARENA.length / 2 + 4, Math.min(ARENA.length / 2 - 4, bp.x + dir * ahead));
   const lane = n === 1 ? -Math.sign(bp.z || 1) * 6 : -9 + (18 * i) / (n - 1);
   m.target.set(x, 0, lane);
+  if (attacking) {
+    // get open: of a few spots around the lane, take the one farthest from the opponents with a clear passing line
+    const opp = w.teamBros(1 - b.team).map((o) => o.position());
+    let best = -1e9;
+    const base = m.target.clone();
+    for (const [ox, oz] of [[0, 0], [4, 0], [7, 2], [7, -2], [3, 4], [3, -4], [-2, 3], [-2, -3]]) {
+      const tx = Math.max(-ARENA.length / 2 + 3, Math.min(ARENA.length / 2 - 3, base.x + dir * ox));
+      const tz = Math.max(-ARENA.width / 2 + 2, Math.min(ARENA.width / 2 - 2, base.z + oz));
+      let free = 9;
+      for (const q of opp) free = Math.min(free, Math.hypot(q.x - tx, q.z - tz));
+      // opponents standing on the line from the ball
+      let block = 0;
+      const lx = tx - bp.x, lz = tz - bp.z, ll = lx * lx + lz * lz || 1;
+      for (const q of opp) {
+        const t = ((q.x - bp.x) * lx + (q.z - bp.z) * lz) / ll;
+        if (t > 0.1 && t < 0.9 && Math.hypot(bp.x + lx * t - q.x, bp.z + lz * t - q.z) < 1.3) block++;
+      }
+      const sc = free - block * 4 - Math.hypot(ox, oz) * 0.15 + (dir * (tx - bp.x) > 0 ? 1 : 0);
+      if (sc > best) {
+        best = sc;
+        m.target.set(tx, 0, tz);
+      }
+    }
+  }
   // a loose ball close by: go for it too
   if (!w.holder && Math.hypot(bp.x - p.x, bp.z - p.z) < 3) m.target.set(bp.x, 0, bp.z);
   m.sprint = Math.hypot(m.target.x - p.x, m.target.z - p.z) > 6;
