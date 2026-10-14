@@ -21,7 +21,11 @@
   detailed dummies, LED screens/boards, colour grading.
   (6) keyboard still felt hard → user's idea: play (almost) only with the MOUSE, like Dota: the player runs to the cursor,
   LMB = pass to the clicked point, RMB = shot to the clicked point, team-mates run and get open by themselves →
-  layout 'mouseonly' is the default (keyboard layouts kept as options).
+  layout 'mouseonly' (keyboard layouts kept as options).
+  (7) still not comfortable → user's idea: COACH mode — the players run, get open and defend by themselves following the
+  chosen tactics; the human only orders where the ball goes (LMB pass, RMB shot, Space lob to the clicked point) →
+  layout 'coach' is the DEFAULT. Menu shows three modes: «Тренер» (coach), «Капитан» (mouseonly), «Футболист»
+  (classic keyboard: 'mouse' or 'keys' layout). Tactics (formation, style, pressing) in the menu and the pause panel.
 - **Soccerbro = the OLD FIFA-style game**, kept only as a library of ready code (ball physics, cloth net — the user likes
   the goal net —, ball texture, sounds, particles). `classic.html` → `src/main.ts`, `src/sim/`, `src/render/`, `src/ui/`.
   Old link: https://claude.ai/artifact/1pQLJehMiRup8dydP6x37b. Don't develop it further unless asked.
@@ -48,10 +52,18 @@ world.ts  — PartyWorld: ARENA 50×32 (also a FieldDims for GoalNet), walls up 
             dribbleAssist: ball at the feet, never captures a ball moving >15 m/s relative (shots deflect off bodies).
             autoSwitch, keepInside() clamps, keeperCatch, chaos (mega/lowgrav/ice/turbo/sweeper), golden goal.
             Tutorial hooks: scripted Map<Bro, fn> (called instead of the AI), skipCountdown(), placeBall().
+            Coach mode (opts.coach): coachStep() instead of human(): everyone is AI; releasing LMB/RMB/Space(lob)/wheel(skill)
+            makes `order` at input.aimPX/aimPZ (absolute cursor point, power from RMB hold), executed by coachExecutor()
+            (our holder / keeper / nearest) when inReach, kept 1.2 s (can be given before a pass arrives). Shift+LMB
+            (input.run) → runOrders "run there" for the nearest free player; RMB on the opponent carrier → runOrders press
+            (target bro, slides in). coachWaits(): our holder dribbles and waits for orders for 3 s (holdT), then the AI decides.
+            controlled = whoever of ours is on the ball (marker only). Teams have tactic {formation, style, press};
+            FORMATIONS per field-player count (2: 1-1/2, 3: 1-2/2-1/1-1-1, 4: 1-2-1/2-2/3-1/1-1-2), STYLE_INFO, PRESS_INFO.
             Input is WORLD-space (main.ts maps keys camera-relative).
-brain.ts  — AI: supporters of the team on the ball get open (pick the spot farthest from opponents with a clear line); chaser (gets behind the ball, dribbles, shoots at the corner away from the keeper — from further out with a
+brain.ts  — AI: supporters hold formation slots (block slides with the ball, style pushes it up/back), high press sends
+            a second man, low/mid press keeps the chaser back while the ball is in their half; runOrders first; of the team on the ball get open (pick the spot farthest from opponents with a clear line); chaser (gets behind the ball, dribbles, shoots at the corner away from the keeper — from further out with a
             full ОГОНЬ meter, volleys, skill moves, passes, lobs, tackles/grabs), keeper(), receivePoint (exported), supporters.
-tutorial.ts — Tutorial: 6 drills (run to ball, pass, shoot, tackle, skill, fire shot) on a size-3 world; places players
+tutorial.ts — Tutorial(mode player|captain|coach): coach = 5 drills (pass, shot, lob, press, fire); others 6 drills (run to ball, pass, shoot, tackle, skill, fire shot) on a size-3 world; places players
             (others idle via w.scripted), checks world events, resets on failure; UI callbacks show/praise/finish.
 dude.ts   — DudeActor: procedural crash-test dummy (lathe torso/limbs, ball joints with bolts, jaw, target stickers, V-neck
             collar, cuffs, shorts stripes, socks with bands + shin guards, studded boots, name+number on the back; small
@@ -70,7 +82,8 @@ view.ts   — ChaseCamera: mode 0 TV (default; side = attack dir, follows the ba
 main.ts   — menu (ИГРАТЬ / ОБУЧЕНИЕ, 4 control tiles, ОГОНЬ help, teams, length, difficulty, layout, hints, auto-switch),
             HUD (bean.css: score + ОГОНЬ bars, prompts chips under the player tag, flash, ПОВТОР + cinema bars, coach card),
             Session(mode match|watch|tutorial), sounds (fire boom, chimes), events → toasts/banners.
-            Layouts: 'mouseonly' (DEFAULT: the controlled player runs to the cursor — walk near it, sprint when > 7 m away;
+            Layouts: 'coach' (DEFAULT: LMB pass / RMB shot / Space lob to the cursor point, Shift+LMB run order, wheel
+            skill; holding a button = slow-mo 0.3× for up to 2.5 s to aim), 'mouseonly' ( the controlled player runs to the cursor — walk near it, sprint when > 7 m away;
             LMB pass / RMB shot to the cursor point, wheel scroll or Space = skill, wheel click = lob, E jump; without the
             ball LMB = dash (Bro.boost) and RMB near the carrier = slide; PartyInput.mouseOnly also makes incoming
             passes met automatically even while the cursor points elsewhere), 'mouse' ( WASD/arrows, LMB/J pass, RMB/K shot, MMB/C/L lob, F skill, E tackle, R grab, Q switch,
