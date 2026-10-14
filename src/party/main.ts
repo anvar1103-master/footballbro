@@ -20,9 +20,19 @@ const uiEl = document.getElementById('ui')!;
 const sound = new Sound();
 
 // ---------------- input ----------------
-type Layout = 'mouse' | 'keys';
+type Layout = 'mouseonly' | 'mouse' | 'keys';
 type Act = 'up' | 'down' | 'left' | 'right' | 'sprint' | 'jump' | 'kick' | 'pass' | 'lob' | 'tackle' | 'grab' | 'switch' | 'skill';
 const LAYOUTS: Record<Layout, { name: string; keys: Record<Act, string[]> }> = {
+  // mouse only: the player runs to the cursor, LMB pass / RMB shot to the clicked point (team-mates play by themselves)
+  mouseonly: {
+    name: 'Только мышь',
+    keys: {
+      up: [], down: [], left: [], right: [],
+      sprint: ['ShiftLeft', 'ShiftRight'], jump: ['KeyE'],
+      pass: ['Mouse0'], kick: ['Mouse2'], lob: ['Mouse1'],
+      skill: ['Wheel', 'Space'], tackle: [], grab: ['KeyR'], switch: ['KeyQ'],
+    },
+  },
   // mouse + keyboard; the J/K/L keys work as well for those who prefer keys with WASD
   mouse: {
     name: 'Мышь + клавиатура',
@@ -42,11 +52,11 @@ const LAYOUTS: Record<Layout, { name: string; keys: Record<Act, string[]> }> = {
     },
   },
 };
-let layout: Layout = 'mouse';
+let layout: Layout = 'mouseonly';
 const opts = { size: 4, length: 180, difficulty: 'normal' as 'easy' | 'normal' | 'hard', autoSwitch: true, hints: true };
 let tutorialDone = false;
 try {
-  const l = localStorage.getItem('footballbro.layout3') as Layout | null;
+  const l = localStorage.getItem('footballbro.layout4') as Layout | null;
   if (l && l in LAYOUTS) layout = l;
   Object.assign(opts, JSON.parse(localStorage.getItem('footballbro.bean.opts') ?? '{}'));
   tutorialDone = localStorage.getItem('footballbro.tutorial') === '1';
@@ -56,7 +66,7 @@ try {
 const keys = new Set<string>();
 const presses: string[] = [];
 /** what the player used last (prompts show mouse buttons or keys accordingly) */
-let device: 'mouse' | 'keys' = layout === 'mouse' ? 'mouse' : 'keys';
+let device: 'mouse' | 'keys' = layout === 'keys' ? 'keys' : 'mouse';
 let lastMouseMove = 0;
 /** keys that stand in for the mouse buttons: using them means "no mouse aim" */
 const ACTION_KEYS = new Set(['KeyJ', 'KeyK', 'KeyL']);
@@ -71,7 +81,7 @@ window.addEventListener('blur', () => keys.clear());
 
 // ---------------- mouse: the cursor on the pitch is the aim; LMB pass, RMB shot, wheel-click lob ----------------
 let mouseX = -1, mouseY = -1;
-const mouseOn = () => layout === 'mouse' && !!session && session.mode !== 'watch' && !session.paused && session.w.phase !== 'over';
+const mouseOn = () => layout !== 'keys' && !!session && session.mode !== 'watch' && !session.paused && session.w.phase !== 'over';
 gameEl.addEventListener('contextmenu', (e) => e.preventDefault());
 window.addEventListener('contextmenu', (e) => {
   if (mouseOn()) e.preventDefault();
@@ -93,8 +103,21 @@ window.addEventListener('mousemove', (e) => {
   mouseY = e.clientY;
 });
 document.addEventListener('mouseleave', () => (mouseX = mouseY = -1));
+// wheel = a short "Wheel" key press (skill move in the mouse-only layout)
+let wheelT = 0;
+window.addEventListener(
+  'wheel',
+  (e) => {
+    if (!mouseOn()) return;
+    e.preventDefault();
+    keys.add('Wheel');
+    clearTimeout(wheelT);
+    wheelT = window.setTimeout(() => keys.delete('Wheel'), 120);
+  },
+  { passive: false },
+);
 /** the cursor aims only while the mouse is actually in use (moved lately or clicked last) */
-const mouseAim = () => mouseOn() && mouseX >= 0 && (device === 'mouse' || performance.now() - lastMouseMove < 2500);
+const mouseAim = () => mouseOn() && mouseX >= 0 && (layout === 'mouseonly' || device === 'mouse' || performance.now() - lastMouseMove < 2500);
 
 function readInput(cam: { forward(): THREE.Vector3 }, aim: { dir: THREE.Vector3; dist: number } | null): PartyInput {
   const k = LAYOUTS[layout].keys;
@@ -110,11 +133,20 @@ function readInput(cam: { forward(): THREE.Vector3 }, aim: { dir: THREE.Vector3;
     mx /= l;
     mz /= l;
   }
-  return { mx, mz, sprint: h('sprint'), jump: h('jump'), kick: h('kick'), pass: h('pass'), lob: h('lob'), tackle: h('tackle'), grab: h('grab'), switch: h('switch'), skill: h('skill'), aimX: aim?.dir.x ?? 0, aimZ: aim?.dir.z ?? 0, aimDist: aim?.dist ?? 0 };
+  const only = layout === 'mouseonly';
+  let sprint = h('sprint');
+  if (only && aim) {
+    // the player runs towards the cursor: walk when it is close, sprint when it is far
+    const m = THREE.MathUtils.clamp((aim.dist - 0.6) / 3, 0, 1);
+    mx = aim.dir.x * m;
+    mz = aim.dir.z * m;
+    sprint ||= aim.dist > 7;
+  }
+  return { mouseOnly: only, mx, mz, sprint, jump: h('jump'), kick: h('kick'), pass: h('pass'), lob: h('lob'), tackle: h('tackle'), grab: h('grab'), switch: h('switch'), skill: h('skill'), aimX: aim?.dir.x ?? 0, aimZ: aim?.dir.z ?? 0, aimDist: aim?.dist ?? 0 };
 }
 const ARROWS: Record<string, string> = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' };
 const label = (c: string) =>
-  c === 'Mouse0' ? 'ЛКМ' : c === 'Mouse2' ? 'ПКМ' : c === 'Mouse1' ? 'Колесо' : c.startsWith('Key') ? c.slice(3) : c.startsWith('Arrow') ? ARROWS[c] : c === 'Space' ? 'Пробел' : c.replace('Left', '').replace('Right', '');
+  c === 'Mouse0' ? 'ЛКМ' : c === 'Mouse2' ? 'ПКМ' : c === 'Mouse1' ? 'Колесо' : c === 'Wheel' ? 'Колёсико' : c.startsWith('Key') ? c.slice(3) : c.startsWith('Arrow') ? ARROWS[c] : c === 'Space' ? 'Пробел' : c.replace('Left', '').replace('Right', '');
 /** all bindings of an action */
 const kl = (a: Act) => [...new Set(LAYOUTS[layout].keys[a].map(label))].join('/');
 /** the one binding to show in prompts: the mouse button or the key, whichever the player uses */
@@ -182,7 +214,7 @@ class Session {
   constructor(public w: PartyWorld, public mode: Mode) {
     const q = (new URLSearchParams(location.search).get('q') as Quality | null) ?? settings.quality;
     this.gfx = new PartyRenderer(gameEl, w, q);
-    if (layout === 'mouse') gameEl.style.cursor = 'crosshair';
+    if (layout !== 'keys') gameEl.style.cursor = 'crosshair';
     const [a, b] = w.teams;
     const hud = document.createElement('div');
     hud.className = 'bb-hud';
@@ -207,6 +239,8 @@ class Session {
       <div class="bb-hint">${
         mode === 'watch'
           ? 'Режим наблюдения · V камера · Esc пауза'
+          : layout === 'mouseonly'
+          ? `<b>Курсор</b> бег · <b>ЛКМ</b> пас в точку · <b>ПКМ</b> удар в точку (держи) · <b>Колёсико/Пробел</b> финт · <b>Клик колёсиком</b> навес · <b>V</b> камера · <b>Esc</b> пауза`
           : `<b>${layout === 'mouse' ? 'WASD' : '←↑↓→'}</b> бег · <b>${key1('pass')}</b> пас · <b>${key1('kick')}</b> удар (держи) · <b>${kl('sprint')}</b> спринт · <b>${key1('skill')}</b> финт · <b>${key1('lob')}</b> навес · <b>${kl('jump')}</b> прыжок · <b>V</b> камера · <b>Esc</b> пауза`
       }</div>`;
     uiEl.appendChild(hud);
@@ -240,7 +274,7 @@ class Session {
           sound.chime(3);
         },
         finish: () => this.tutorialOver(),
-      }, key1);
+      }, key1, layout === 'mouseonly');
     } else this.showCount('3');
     this.loop = this.loop.bind(this);
     this.raf = requestAnimationFrame(this.loop);
@@ -409,7 +443,7 @@ class Session {
       if (h && h.team !== c.team) {
         const hp = h.position();
         const d = Math.hypot(hp.x - p.x, hp.z - p.z);
-        html = d < 4.5 ? chip('kick', 'подкат', true) + chip('grab', 'схватить') : w.switchTarget ? chip('pass', 'сменить игрока') : '';
+        html = d < 4.5 ? chip('kick', 'подкат', true) + chip('grab', 'схватить') : w.switchTarget ? chip('pass', layout === 'mouseonly' ? 'рывок' : 'сменить игрока') : '';
       } else if (w.onBall(c)) {
         const dGoal = Math.hypot(w.goalX(c.team) - bp.x, bp.z);
         const high = bp.y - w.ballR > 1.15;
@@ -421,7 +455,7 @@ class Session {
         }
       } else if (w.switchTarget) {
         const sp = w.switchTarget.position();
-        if (Math.hypot(sp.x - bp.x, sp.z - bp.z) + 3 < Math.hypot(p.x - bp.x, p.z - bp.z)) html = chip('pass', 'сменить игрока');
+        if (Math.hypot(sp.x - bp.x, sp.z - bp.z) + 3 < Math.hypot(p.x - bp.x, p.z - bp.z)) html = chip('pass', layout === 'mouseonly' ? 'рывок' : 'сменить игрока');
       }
     }
     if (html !== this.promptKey) {
@@ -649,7 +683,7 @@ function toMenu() {
 function save() {
   try {
     localStorage.setItem('footballbro.bean.opts', JSON.stringify(opts));
-    localStorage.setItem('footballbro.layout3', layout);
+    localStorage.setItem('footballbro.layout4', layout);
   } catch {
     /* ignore */
   }
@@ -662,7 +696,8 @@ function showMenu() {
     `<div class="seg">${items.map(([v, l]) => `<button data-k="${key}" data-v="${v}" class="${v === cur ? 'on' : ''}">${l}</button>`).join('')}</div>`;
   const tile = (k: string, t: string, sub: string) => `<div class="bb-key"><b>${k}</b><div>${t}</div><small>${sub}</small></div>`;
   const render = () => {
-    const mouse = layout === 'mouse';
+    const mouse = layout !== 'keys';
+    const only = layout === 'mouseonly';
     el.innerHTML = `<div class="menu-card bb-card">
       <div class="bb-logo">FOOTBALL<span>BRO</span></div>
       <div class="bb-tag-line">Угарный футбол краш-тест манекенов · финты, удары через себя, подкаты и огненные удары</div>
@@ -671,10 +706,17 @@ function showMenu() {
         <button class="btn big bb-learn ${tutorialDone ? '' : 'new'}" id="learn">ОБУЧЕНИЕ${tutorialDone ? '' : '<em>новичкам</em>'}</button>
       </div>
       <div class="bb-keys">
-        ${tile(mouse ? 'WASD' : '← ↑ → ↓', 'бег', `${kl('sprint')} — спринт`)}
-        ${tile(mouse ? 'ЛКМ' : 'S', 'пас', 'без мяча — сменить игрока')}
-        ${tile(mouse ? 'ПКМ' : 'D', 'удар', 'держи — сильнее · без мяча — подкат')}
-        ${tile(mouse ? 'F' : 'W', 'финт', `${mouse ? 'C' : 'A'} — навес · ${kl('jump')} — прыжок`)}
+        ${
+          only
+            ? tile('🖱 Курсор', 'бег', 'игрок бежит к курсору, далеко — быстрее') +
+              tile('ЛКМ', 'пас', 'в точку клика · без мяча — рывок') +
+              tile('ПКМ', 'удар', 'в точку клика, держи — сильнее · без мяча — подкат') +
+              tile('Колёсико', 'финт', 'или Пробел · клик колёсиком — навес')
+            : tile(mouse ? 'WASD' : '← ↑ → ↓', 'бег', `${kl('sprint')} — спринт`) +
+              tile(mouse ? 'ЛКМ' : 'S', 'пас', 'без мяча — сменить игрока') +
+              tile(mouse ? 'ПКМ' : 'D', 'удар', 'держи — сильнее · без мяча — подкат') +
+              tile(mouse ? 'F' : 'W', 'финт', `${mouse ? 'C' : 'A'} — навес · ${kl('jump')} — прыжок`)
+        }
       </div>
       <div class="bb-firehelp"><b>🔥 ОГОНЬ</b> Пасуй, финти, отбирай мяч — шкала заполнится, и следующий удар станет огненным: он сносит всех на пути, даже вратаря!</div>
       <div class="options bb-opts">
@@ -687,7 +729,9 @@ function showMenu() {
       </div>
       <div class="controls bb-controls">
         ${
-          mouse
+          only
+            ? `<div>Партнёры бегают и открываются сами — ты управляешь только тем, кто ближе к мячу. Кликай туда, куда отдать пас или ударить.</div>`
+            : mouse
             ? `<div><b>Курсор</b> на поле — куда пасовать и бить (или <b>J</b> пас, <b>K</b> удар — тогда бьёт по воротам сам)</div>`
             : `<div><b>Стрелки</b> — бег, удар сам летит в угол ворот, куда жмёшь стрелку</div>`
         }
@@ -712,7 +756,7 @@ function showMenu() {
       if (k === 'difficulty') opts.difficulty = v as typeof opts.difficulty;
       if (k === 'layout') {
         layout = v as Layout;
-        device = layout === 'mouse' ? 'mouse' : 'keys';
+        device = layout === 'keys' ? 'keys' : 'mouse';
       }
       if (k === 'auto') opts.autoSwitch = v === 'on';
       if (k === 'hints') opts.hints = v === 'on';

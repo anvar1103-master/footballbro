@@ -63,6 +63,8 @@ export interface PartyInput {
   aimZ: number;
   /** distance to the cursor point on the pitch (0 = only a direction) */
   aimDist?: number;
+  /** mouse-only mode: pass without the ball = a dash to the cursor, incoming passes are met automatically */
+  mouseOnly?: boolean;
 }
 export const NO_INPUT: PartyInput = { mx: 0, mz: 0, sprint: false, jump: false, kick: false, pass: false, lob: false, tackle: false, grab: false, switch: false, skill: false, aimX: 0, aimZ: 0 };
 /** indoor hall: walls go up to the roof, so the ball never leaves */
@@ -1434,7 +1436,7 @@ export class PartyWorld {
     b.intent = { moveX: input.mx, moveZ: input.mz, sprint: input.sprint, jump: input.jump, dive: input.tackle && !prev.tackle };
     this.passTarget = null;
     // receive assist: hands off the keys while a team-mate's pass comes = run to meet it
-    if (Math.hypot(input.mx, input.mz) < 0.1 && this.phase === 'play') {
+    if ((Math.hypot(input.mx, input.mz) < 0.1 || input.mouseOnly) && this.phase === 'play' && this.holder !== b) {
       const meet = receivePoint(this, b);
       if (meet) {
         const p = b.position();
@@ -1445,6 +1447,13 @@ export class PartyWorld {
           b.intent.moveX = dx * k;
           b.intent.moveZ = dz * k;
           b.intent.sprint = d > 3;
+        }
+        // turn to face the ball so it can be controlled
+        if (d < 1.5) {
+          const bp = this.ballPos();
+          b.intent.moveX *= 0.3;
+          b.intent.moveZ *= 0.3;
+          b.face.set(bp.x - p.x, 0, bp.z - p.z).normalize();
         }
       }
     }
@@ -1463,6 +1472,15 @@ export class PartyWorld {
     const near = this.onBall(b);
     this.passTarget = near && b.state === 'up' && !(this.holder && this.holder.team !== b.team) ? this.passChoice(b, aim, mouse, aimDist) : null;
     const opp = this.holder && this.holder.team !== b.team ? this.holder : null;
+    if (!near && input.pass && !prev.pass && !this.buffer && input.mouseOnly) {
+      // mouse only: a burst towards the cursor (to close down or cut out a pass)
+      if (b.state === 'up' && b.boost <= 0) {
+        b.boost = 0.7;
+        if (mouse) b.face.copy(aim);
+        this.emit({ type: 'switch', pos: b.position(), team: b.team, text: 'dash' });
+      }
+      return;
+    }
     if (!near && input.pass && !prev.pass && !this.buffer) {
       const target = this.pickSwitch();
       if (target) {
