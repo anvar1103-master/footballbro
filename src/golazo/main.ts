@@ -28,6 +28,7 @@ interface Progress {
   stars: Record<number, number>;
   best: Record<number, number>;
   soWins?: number[];
+  fkBest?: number;
   muted?: boolean;
 }
 const SAVE_KEY = 'golazo.progress.v1';
@@ -53,6 +54,7 @@ const totalStars = (p: Progress) => Object.values(p.stars).reduce((s, v) => s + 
 // ------------------------------------------------------------------ replay buffer
 
 interface Frame {
+  t: number;
   ball: THREE.Vector3;
   vel: THREE.Vector3;
   spin: THREE.Vector3;
@@ -83,6 +85,15 @@ const SO_DIFF = [
 ];
 const RUN_UP = 1.6;
 
+/** endless free-kick challenge: 3 lives, the wall, distance and keeper grow with every goal */
+interface FreeKicks {
+  lives: number;
+  score: number;
+  goals: number;
+  n: number;
+  last: number;
+}
+
 class App {
   r: GolazoRenderer;
   sound = new Sound();
@@ -94,6 +105,8 @@ class App {
   home: TeamInfo = TEAM_PRESETS[0];
   away: TeamInfo = TEAM_PRESETS[1];
   attempt = 0;
+  /** failed tries on the current career level (a hint shows up after two) */
+  fails = 0;
   private acc = 0;
   private last = performance.now();
   private timeScale = 1;
@@ -120,6 +133,7 @@ class App {
   private hud!: HTMLElement;
   private views = new Map<number, ActorView>();
   so: Shootout | null = null;
+  fk: FreeKicks | null = null;
 
   constructor() {
     const quality = (qs.get('q') as Quality) || (matchMedia('(pointer: coarse)').matches ? 'medium' : 'high');
@@ -161,6 +175,7 @@ class App {
         <div class="gz-sub">Нарисуй свой лучший гол</div>
         <button class="gz-btn gz-big" data-go>${totalStars(this.progress) ? 'ПРОДОЛЖИТЬ' : 'ИГРАТЬ'}</button>
         <button class="gz-btn gz-ghost" data-map>Уровни · ★ ${totalStars(this.progress)}/${LEVELS.length * 3}</button>
+        <button class="gz-btn gz-ghost" data-fk>Штрафные: на выживание${this.progress.fkBest ? ` · рекорд ${this.progress.fkBest}` : ''}</button>
         <div class="gz-so-pick"><span>Серия пенальти</span>${SO_DIFF.map((d, i) => `<button class="gz-btn gz-ghost" data-so="${i}">${d.name}${this.progress.soWins?.[i] ? ` · 🏆${this.progress.soWins[i]}` : ''}</button>`).join('')}</div>
         <div class="gz-how">
           <div><b>1</b>Проведи линию от мяча</div>
@@ -176,6 +191,10 @@ class App {
       this.sound.start();
       this.showMap();
     };
+    $('[data-fk]', node).onclick = () => {
+      this.sound.start();
+      this.startFreeKicks();
+    };
     node.querySelectorAll<HTMLButtonElement>('[data-so]').forEach((b) => {
       b.onclick = () => {
         this.sound.start();
@@ -184,9 +203,87 @@ class App {
     });
   }
 
+  // ---------------------------------------------------------------- free-kick challenge
+
+  startFreeKicks() {
+    this.so = null;
+    this.fk = { lives: 3, score: 0, goals: 0, n: 0, last: 0 };
+    this.attempt = Math.floor(Math.random() * 1000);
+    this.nextFreeKick();
+  }
+
+  private nextFreeKick() {
+    const fk = this.fk!;
+    const g = fk.goals;
+    const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+    const d = Math.min(33, rnd(17, 22) + g * 0.9);
+    const z = (Math.random() < 0.5 ? -1 : 1) * rnd(0, Math.min(16, 4 + g * 1.2));
+    const L: LevelDef = {
+      id: 800 + fk.n, chapter: 0, kind: 'freekick', title: `Штрафной ${fk.n + 1}`, brief: '',
+      mates: [{ at: [d, z], n: 10 }], opps: [],
+      wall: Math.min(6, 3 + Math.floor(g / 2)),
+      gk: Math.min(0.85, 0.35 + g * 0.05),
+      stars: [900, 1200],
+    };
+    fk.n++;
+    this.attempt++;
+    this.loadLevel(L, false);
+    // a bonus target in one of the top or bottom corners
+    const m = this.m!;
+    m.target = { z: (Math.random() < 0.5 ? -1 : 1) * rnd(2.3, 3.1), y: Math.random() < 0.6 ? rnd(1.6, 1.95) : rnd(0.45, 0.8), r: 0.55 };
+    this.r.setTarget(m.target);
+    this.camSnap = true;
+    this.beginPlay();
+  }
+
+  private fkRecord() {
+    const fk = this.fk!;
+    const res = this.m!.result!;
+    if (res.ok) {
+      fk.goals++;
+      fk.score += res.points;
+      fk.last = res.points;
+    } else fk.lives--;
+    if (fk.lives <= 0) this.showFreeKickEnd();
+    else this.nextFreeKick();
+  }
+
+  private fkHud() {
+    const fk = this.fk!;
+    return `<div class="gz-fk"><span class="lives">${'❤'.repeat(fk.lives)}<i>${'❤'.repeat(3 - fk.lives)}</i></span><b>${fk.score}</b><small>голов: ${fk.goals}</small></div>`;
+  }
+
+  private showFreeKickEnd() {
+    const fk = this.fk!;
+    this.screen = 'result';
+    const best = this.progress.fkBest ?? 0;
+    const record = fk.score > best;
+    if (record) {
+      this.progress.fkBest = fk.score;
+      saveProgress(this.progress);
+      this.sound.chime(4);
+    }
+    const node = this.setUi(`
+      <div class="gz-screen gz-result ${record ? 'win' : 'lose'}">
+        <div class="gz-card">
+          <h1>${record ? 'НОВЫЙ РЕКОРД!' : 'КОНЕЦ СЕРИИ'}</h1>
+          <div class="gz-points">${fk.score} <small>очков</small></div>
+          <p class="why">Голов: ${fk.goals}. ${record ? '' : `Рекорд: ${best}.`} Бей в мишени — за них +500.</p>
+          <div class="gz-row"><button class="gz-btn gz-big" data-again>↻ ЕЩЁ РАЗ</button></div>
+          <button class="gz-link" data-menu>В меню</button>
+        </div>
+      </div>`);
+    $('[data-again]', node).onclick = () => this.startFreeKicks();
+    $('[data-menu]', node).onclick = () => {
+      this.fk = null;
+      this.showTitle();
+    };
+  }
+
   // ---------------------------------------------------------------- penalty shoot-out
 
   startShootout(diff: number) {
+    this.fk = null;
     const opps = TEAM_PRESETS.filter((t) => t !== this.home && t.short !== 'SUN');
     this.so = { diff, opp: opps[Math.floor(Math.random() * opps.length)], us: [], them: [], turn: 'us', keeper: null, over: false };
     this.attempt = Math.floor(Math.random() * 1000);
@@ -307,6 +404,7 @@ class App {
   showMap() {
     this.screen = 'map';
     this.so = null;
+    this.fk = null;
     const p = this.progress;
     let html = `<div class="gz-screen gz-map"><div class="gz-maphead"><button class="gz-icon" data-back>‹</button><h1>Карьера</h1><div class="gz-total">★ ${totalStars(p)}/${LEVELS.length * 3}</div></div><div class="gz-chapters">`;
     CHAPTERS.forEach((name, ci) => {
@@ -332,7 +430,9 @@ class App {
 
   startLevel(L: LevelDef) {
     this.sound.start();
+    if (L.id !== this.level.id) this.fails = 0;
     this.so = null;
+    this.fk = null;
     this.attempt = 0;
     this.loadLevel(L, true);
     this.screen = 'intro';
@@ -361,6 +461,7 @@ class App {
     this.r.setActors(this.m, this.home, this.away);
     this.r.showRuns(this.m);
     this.r.setPreview(null, null, null);
+    this.r.setTarget(null);
     this.frames = [];
     this.replay = null;
     this.resultShown = false;
@@ -377,7 +478,7 @@ class App {
     this.hud = this.setUi(`
       <div class="gz-hud">
         <div class="gz-top">
-          ${this.so ? this.soDots() : `<div class="gz-badge"><b>${this.level.id}</b>${this.level.title}</div>`}
+          ${this.so ? this.soDots() : this.fk ? this.fkHud() : `<div class="gz-badge"><b>${this.level.id}</b>${this.level.title}</div>`}
           <div class="gz-tools">
             <button class="gz-icon" data-restart title="Заново (R)">↻</button>
             <button class="gz-icon" data-mute title="Звук (M)">${this.sound.muted ? '🔇' : '🔊'}</button>
@@ -391,12 +492,14 @@ class App {
           <button class="gz-icon" data-rotr>⟳</button>
         </div>
         <button class="gz-lob" data-lob title="Навес (Пробел)">⤴ НАВЕС</button>
+        <button class="gz-hintbtn" data-hintbtn hidden>💡 Подсказка</button>
+        <div class="gz-finger" data-finger hidden><i></i></div>
         <div class="gz-banner" data-banner></div>
         <div class="gz-toast" data-toast></div>
       </div>`);
-    $('[data-restart]', this.hud).onclick = () => (this.so ? this.startShootout(this.so.diff) : this.restart());
-    $('[data-menu]', this.hud).onclick = () => (this.so ? ((this.so = null), this.showTitle()) : this.showMap());
-    if (this.so) for (const sel of ['.gz-cam', '[data-lob]']) ($(sel, this.hud) as HTMLElement).style.display = 'none';
+    $('[data-restart]', this.hud).onclick = () => (this.so ? this.startShootout(this.so.diff) : this.fk ? this.startFreeKicks() : this.restart());
+    $('[data-menu]', this.hud).onclick = () => (this.so || this.fk ? ((this.so = null), (this.fk = null), this.showTitle()) : this.showMap());
+    if (this.so || this.fk) for (const sel of ['.gz-cam', '[data-lob]']) ($(sel, this.hud) as HTMLElement).style.display = 'none';
     $('[data-mute]', this.hud).onclick = (e) => {
       this.toggleMute();
       (e.currentTarget as HTMLElement).textContent = this.sound.muted ? '🔇' : '🔊';
@@ -415,7 +518,28 @@ class App {
     this.setLob(false);
     this.updateHint();
     this.sound.whistle(1);
+    // first levels: a finger shows the swipe from the ball
+    this.demoT = (this.level.id === 1 || this.level.id === 3) && !this.so && !this.fk && !(this.progress.stars[this.level.id] > 0) ? 0 : -1;
+    const hb = $('[data-hintbtn]', this.hud);
+    hb.hidden = !(this.level.hint && this.fails >= 2 && !this.so && !this.fk);
+    hb.onclick = () => {
+      this.showHint();
+      hb.hidden = true;
+    };
     if (this.so) this.banner(this.so.turn === 'us' ? 'ТВОЙ УДАР' : 'ТЫ В ВОРОТАХ', '', this.so.turn === 'us' ? '#ffd23f' : '#6fe3ff');
+  }
+
+  /** ghost line of a first move that works (found offline by the solver bot) */
+  private showHint() {
+    const m = this.m;
+    const h = this.level.hint;
+    if (!m || !h || m.kicks > 0 || m.phase !== 'aim') return;
+    const a: Action =
+      h[0] === 'shot'
+        ? { type: 'shot', target: new THREE.Vector3(GOAL_X, h[2], h[1]), curl: h[3] }
+        : { type: h[0], target: new THREE.Vector3(GOAL_X - h[1], 0, h[2]), curl: 0 };
+    this.r.setPreview(m.preview(a), a.type, a.type === 'shot' ? null : m.pickReceiver(a.target, a.type === 'lob'));
+    this.toast('Вот так — попробуй!');
   }
 
   private setLob(v: boolean) {
@@ -484,6 +608,7 @@ class App {
     this.screen = 'result';
     const L = this.level;
     const prevStars = this.progress.stars[L.id] ?? 0;
+    if (!res.ok) this.fails++;
     if (res.ok) {
       this.progress.stars[L.id] = Math.max(prevStars, res.stars);
       this.progress.best[L.id] = Math.max(this.progress.best[L.id] ?? 0, res.points);
@@ -602,7 +727,7 @@ class App {
         this.replay = null;
         return;
       }
-      if (k === 'r' || k === 'к') this.restart();
+      if (k === 'r' || k === 'к') this.so ? this.startShootout(this.so.diff) : this.fk ? this.startFreeKicks() : this.restart();
       else if (k === 'escape') this.screen === 'play' || this.screen === 'result' ? this.showMap() : this.screen === 'map' && this.showTitle();
       else if (k === 'm' || k === 'ь') this.toggleMute();
       else if (k === ' ' && this.screen === 'play') {
@@ -793,45 +918,76 @@ class App {
     }
     if (m.phase === 'fly' || m.phase === 'windup' || m.phase === 'over') this.record();
 
-    if (this.so && m.phase === 'over' && this.screen === 'play') {
+    if ((this.so || this.fk) && m.phase === 'over' && this.screen === 'play') {
       this.overT += dt;
-      if (m.overT > 1.7 && !this.resultShown) {
+      if (m.overT > (this.fk && m.result?.ok ? 2.3 : 1.7) && !this.resultShown) {
         this.resultShown = true;
-        this.soRecord();
+        if (this.so) this.soRecord();
+        else this.fkRecord();
         return;
       }
     } else if (m.phase === 'over' && this.screen === 'play' && !this.resultShown) {
       this.overT += dt;
       const res = m.result!;
-      if (res.ok && m.overT > 1.4 && this.frames.length > 30 && !this.replayDone) {
+      if (res.ok && m.overT > 2.4 && this.frames.length > 30 && !this.replayDone) {
         this.startReplay();
         return;
       }
-      if (m.overT > (res.ok ? 2.2 : 1.6)) this.showResult();
+      if (m.overT > (res.ok ? 3.2 : 1.6)) this.showResult();
     } else this.overT = 0;
 
     this.updateCamera(dt);
+    this.updateDemo(dt);
     this.r.netFade = this.so?.turn === 'them' ? 0.22 : 1;
     for (const a of m.actors) this.views.set(a.id, liveView(a));
     this.r.draw(this.views, b, dt, m.phase === 'aim' && m.holder ? liveView(m.holder) : null);
   }
 
   private replayDone = false;
+  private demoT = -1;
+
+  /** animated finger: ball → goal corner (level 1) or → the team-mate (level 3) */
+  private updateDemo(dt: number) {
+    const f = this.hud?.querySelector('[data-finger]') as HTMLElement | null;
+    const m = this.m;
+    if (!f || !m) return;
+    if (this.demoT < 0 || this.drawing || m.phase !== 'aim' || m.kicks > 0 || this.screen !== 'play') {
+      f.hidden = true;
+      if (this.drawing) this.demoT = -1;
+      return;
+    }
+    this.demoT += dt;
+    const a = this.r.project(m.ball.pos);
+    const mate = m.actors.find((x) => x.team === 0 && x !== m.holder);
+    const tgt = this.level.id === 3 && mate ? mate.pos : new THREE.Vector3(GOAL_X, 1.9, 2.9);
+    const b = this.r.project(tgt);
+    const k = Math.min(1, (this.demoT % 2.2) / 1.4);
+    const e = k * k * (3 - 2 * k);
+    // a little bend, like a curler
+    const bend = Math.sin(e * Math.PI) * -40;
+    const x = a.x + (b.x - a.x) * e + bend;
+    const y = a.y + (b.y - a.y) * e;
+    f.hidden = false;
+    f.style.transform = `translate(${x}px, ${y}px)`;
+    f.style.opacity = k >= 1 ? '0' : '1';
+  }
 
   private record() {
     const m = this.m!;
     const actors = new Map<number, ActorView>();
     for (const a of m.actors) actors.set(a.id, snapActor(a));
-    this.frames.push({ ball: m.ball.pos.clone(), vel: m.ball.vel.clone(), spin: m.ball.spin.clone(), actors });
-    if (this.frames.length > 360) this.frames.shift();
+    this.frames.push({ t: m.t, ball: m.ball.pos.clone(), vel: m.ball.vel.clone(), spin: m.ball.spin.clone(), actors });
+    if (this.frames.length > 600) this.frames.shift();
   }
+
+  private goalT = 0;
 
   private startReplay() {
     this.replayDone = true;
-    // start ~2.2 s of real time before the goal (frames are recorded per render frame)
-    const start = Math.max(0, this.frames.length - 150);
+    // from ~2 s of game time before the goal to just after it
     const side = (this.m!.lastKickFrom.z || 1) > 0 ? -1 : 1;
-    this.replay = { i: start, t: 0, side };
+    const t0 = Math.max(this.frames[0].t, this.goalT - 2.0);
+    this.replay = { i: 0, t: t0, side };
     this.r.net.reset();
     this.r.ball.resetTrail();
     this.toast('ПОВТОР');
@@ -840,9 +996,9 @@ class App {
 
   private stepReplay(dt: number) {
     const rp = this.replay!;
-    rp.t += dt * 0.5;
-    const i = Math.min(this.frames.length - 1, rp.i + Math.floor(rp.t * 60));
-    const f = this.frames[i];
+    rp.t += dt * 0.45;
+    while (rp.i < this.frames.length - 1 && this.frames[rp.i + 1].t <= rp.t) rp.i++;
+    const f = this.frames[rp.i];
     // low camera beside the goal
     const look = f.ball;
     const pos = new THREE.Vector3(GOAL_X - 7, 1.5, rp.side * 11);
@@ -851,8 +1007,8 @@ class App {
     this.r.camera.fov = 38;
     this.r.camera.updateProjectionMatrix();
     this.r.camera.lookAt(this.camLook);
-    this.r.draw(f.actors, { pos: f.ball, vel: f.vel, spin: f.spin }, dt * 0.5, null);
-    if (i >= this.frames.length - 1) {
+    this.r.draw(f.actors, { pos: f.ball, vel: f.vel, spin: f.spin }, dt * 0.45, null);
+    if (rp.t > this.goalT + 0.8 || rp.i >= this.frames.length - 1) {
       this.replay = null;
       this.hud?.classList.remove('replaying');
       this.r.camera.fov = this.r.baseFov();
@@ -894,6 +1050,7 @@ class App {
           this.updateHint();
           break;
         case 'goal': {
+          this.goalT = m.t;
           const res = m.result!;
           if (this.so?.turn === 'them') {
             this.sound.crowdReact('ooh');
@@ -905,6 +1062,7 @@ class App {
           this.r.stadium.hype(1);
           this.r.particles.confetti(new THREE.Vector3(GOAL_X - 1, 2, e.pos?.z ?? 0), [this.home.primary, this.home.secondary, '#ffd23f', '#ffffff']);
           this.r.shake = 1;
+          if (m.targetHit) this.r.burstTarget();
           const best = [...res.bonuses].sort((a, b) => b.pts - a.pts).find((b) => b.label !== 'Гол');
           this.banner(res.stars === 3 ? 'ГОЛАЗО!' : 'ГОЛ!', best?.label ?? '', res.stars === 3 ? '#ff4fa3' : '#ffd23f');
           break;
@@ -995,6 +1153,9 @@ class App {
         const back = (7 + far * 5) * pk;
         const up = (3.2 + far * 3.3) * (this.r.portrait ? 1.7 : 1) + (m.touch !== 'feet' ? b.y * 0.8 : 0);
         pos = new THREE.Vector3(b.x - dir.x * back, up, b.z - dir.z * back);
+        // over the kicker's shoulder, so he does not hide the ball
+        pos.x += -dir.z * 1.3;
+        pos.z += dir.x * 1.3;
         const ahead = 7 + far * 6;
         look = new THREE.Vector3(b.x + dir.x * ahead, 0.9, b.z + dir.z * ahead);
       }
@@ -1013,7 +1174,13 @@ class App {
       if (hd.lengthSq() < 1) hd.set(1, 0, 0);
       hd.normalize();
       const shot = m.lastAction?.type === 'shot';
-      if (m.phase === 'over' && m.result?.ok) {
+      if (m.phase === 'over' && m.result?.ok && m.scorer && m.overT > 0.8) {
+        // celebration: follow the scorer to the corner flag
+        const sc = m.scorer.pos;
+        pos = new THREE.Vector3(sc.x - 7, 2.4, sc.z * 0.75);
+        look = new THREE.Vector3(sc.x, 1.1, sc.z);
+        rate = 2;
+      } else if (m.phase === 'over' && m.result?.ok) {
         pos = cam.position.clone().lerp(new THREE.Vector3(GOAL_X - 9, 2.6, b.z * 0.5 + (cam.position.z > b.z ? 5 : -5)), 0.5);
         look = new THREE.Vector3(GOAL_X, 1.2, b.z);
         rate = 1.5;

@@ -129,6 +129,9 @@ export class Moment {
   private guessPt = new Vector2();
   /** shoot-out: the player is the keeper (team 1); userGuess = (z, y) of his dive, null = stay */
   userKeeper = false;
+  /** free-kick challenge: a bonus target on the goal (z, y, radius) */
+  target: { z: number; y: number; r: number } | null = null;
+  targetHit = false;
   userGuess: Vector2 | null = null;
   private path: { t: number; p: Vector3 }[] = [];
   private passes = 0;
@@ -139,6 +142,9 @@ export class Moment {
   private deflected = false;
   /** set when the result is decided but the ball keeps flying for the camera */
   private decided = false;
+  private celebrateT = -1;
+  /** who scored (for the celebration camera) */
+  scorer: Actor | null = null;
 
   constructor(public level: LevelDef, seed = 1) {
     this.rng = new Rng(seed * 7919 + level.id * 31);
@@ -367,7 +373,20 @@ export class Moment {
   /** Take the action (the kick happens after a short wind-up). */
   act(action: Action) {
     if (this.phase !== 'aim' || !this.holder) return;
-    const kick = this.plan(action);
+    // long shots are less exact: the further out, the more the strike strays from the drawn point
+    let real = action;
+    if (action.type === 'shot') {
+      const b = this.ball.pos;
+      const dist = Math.hypot(action.target.x - b.x, action.target.z - b.z);
+      const sigma = Math.max(0, dist - 19) * 0.04 * (this.touch === 'feet' ? 1 : 1.3);
+      if (sigma > 0) {
+        const t = action.target.clone();
+        t.z += this.rng.gauss() * sigma;
+        t.y = Math.max(0.12, t.y + this.rng.gauss() * sigma * 0.6);
+        real = { ...action, target: t };
+      }
+    }
+    const kick = this.plan(real);
     this.pending = { action, kick };
     this.phase = 'windup';
     this.windT = this.touch === 'feet' ? 0.2 : 0.12;
@@ -526,6 +545,13 @@ export class Moment {
     }
     if (this.phase === 'over') {
       this.overT += dt;
+      if (this.celebrateT >= 0) {
+        this.celebrateT += dt;
+        const scorer = this.kicker;
+        if (scorer && this.celebrateT > 0.6)
+          for (const a of this.actors)
+            if (a.team === 0 && a !== scorer) a.goal = scorer.pos.clone().add(new Vector3(-1.2 - (a.id % 3) * 0.5, 0, ((a.id % 2) - 0.5) * 2));
+      }
       this.ballStep(dt);
       for (const a of this.actors) this.moveActor(a, dt);
       if (this.keeper) this.keeperStep(this.keeper, dt);
@@ -562,10 +588,22 @@ export class Moment {
       this.crossY = this.ball.pos.y;
       this.finish(true, 'ГОЛ!');
       this.events.push({ type: 'goal', pos: this.ball.pos.clone() });
+      // the scorer wheels away to the corner flag, the others chase him
+      const scorer = this.kicker;
+      this.scorer = scorer;
+      const flag = new Vector3(GOAL_X - 2, 0, (scorer && scorer.pos.z < 0 ? -1 : 1) * (FIELD.width / 2 - 2));
       for (const a of this.actors) {
-        if (a.team === 0) a.celebrate = true;
-        else a.sad = true;
+        a.path = null;
+        if (a.team === 0) {
+          a.celebrate = true;
+          a.goal = a === scorer ? flag : null;
+          a.speed = Math.max(a.speed, 7.5);
+        } else {
+          a.sad = true;
+          a.goal = null;
+        }
       }
+      this.celebrateT = 0;
     }
   }
 
@@ -963,6 +1001,11 @@ export class Moment {
       if (this.passes > 0) bonuses.push({ label: `Пасы ×${this.passes}`, pts: this.passes * 100 });
       if (this.oneTouchPasses > 0) bonuses.push({ label: 'В одно касание', pts: this.oneTouchPasses * 150 });
       if (this.lastKickSpeed > 29 && this.lastKickTouch === 'feet') bonuses.push({ label: 'Пушка', pts: 100 });
+      const tg = this.target;
+      if (tg && Math.hypot(this.crossZ - tg.z, this.crossY - tg.y) < tg.r + 0.12) {
+        this.targetHit = true;
+        bonuses.push({ label: 'В мишень!', pts: 500 });
+      }
       pts = bonuses.reduce((s, b) => s + b.pts, 0);
     }
     const [s2, s3] = this.level.stars;
