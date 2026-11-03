@@ -29,7 +29,6 @@ js = open(glob.glob(os.path.join(build, 'assets/*.js'))[0]).read().replace('</sc
 css = open(glob.glob(os.path.join(build, 'assets/*.css'))[0]).read()
 with open(out, 'w') as o:
     o.write('<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">\n<title>' + title + '</title>\n')
-    o.write('<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Russo+One&family=Nunito:wght@600;800;900&display=swap">\n')
     o.write('<style>:root{color-scheme:dark}' + css + '</style>\n<div id="game"></div><div id="ui"></div>\n')
     o.write('<script>window.__FB_MODELS=' + json.dumps(models) + ';window.__FB_PALETTE=' + json.dumps(png) + ';</script>\n')
     o.write('<script type="module">' + js + '</script>\n')

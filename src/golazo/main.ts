@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import './fonts.css';
+import { tr } from './i18n';
+import { gameplay, gameReady, initPlatform, isPaused, loadCloud, onPause, saveCloud, showInterstitial, showRewarded } from './platform';
 import './golazo.css';
 import { SIM_DT } from '../sim/config';
 import { TEAM_PRESETS, TeamInfo } from '../sim/team';
@@ -47,6 +50,16 @@ function saveProgress(p: Progress) {
   } catch {
     /* private mode */
   }
+  saveCloud(JSON.stringify(p));
+}
+/** merge two saves: the best stars / scores of both */
+function mergeProgress(a: Progress, b: Progress): Progress {
+  const out: Progress = { stars: { ...a.stars }, best: { ...a.best }, soWins: [...(a.soWins ?? [])], fkBest: a.fkBest, muted: a.muted };
+  for (const [k, v] of Object.entries(b.stars ?? {})) out.stars[+k] = Math.max(out.stars[+k] ?? 0, v);
+  for (const [k, v] of Object.entries(b.best ?? {})) out.best[+k] = Math.max(out.best[+k] ?? 0, v);
+  (b.soWins ?? []).forEach((v, i) => (out.soWins![i] = Math.max(out.soWins![i] ?? 0, v ?? 0)));
+  out.fkBest = Math.max(out.fkBest ?? 0, b.fkBest ?? 0) || undefined;
+  return out;
 }
 const unlocked = (p: Progress, id: number) => id === 1 || (p.stars[id - 1] ?? 0) > 0 || qs.has('all');
 const totalStars = (p: Progress) => Object.values(p.stars).reduce((s, v) => s + v, 0);
@@ -144,6 +157,11 @@ class App {
     this.g2 = this.canvas.getContext('2d')!;
     this.resizeInk();
     window.addEventListener('resize', () => this.resizeInk());
+    onPause((p) => {
+      // ad or hidden tab: stop sound and the sim clock
+      const ctx = this.sound.ctx;
+      if (ctx) void (p ? ctx.suspend() : this.sound.muted ? undefined : ctx.resume());
+    });
     this.sound.setMuted(!!this.progress.muted);
     this.bindInput();
     // a level in the background of the title screen
@@ -154,6 +172,33 @@ class App {
       else this.showTitle();
     } else this.showTitle();
     requestAnimationFrame(() => this.frame());
+  }
+
+  // ---------------------------------------------------------------- platform
+
+  private lastAd = Date.now();
+
+  /** merge the cloud save into the local one (the best of both) */
+  async syncCloud() {
+    const c = await loadCloud();
+    if (!c) return;
+    try {
+      this.progress = mergeProgress(this.progress, JSON.parse(c));
+      saveProgress(this.progress);
+      if (this.screen === 'title') this.showTitle();
+    } catch {
+      /* corrupt cloud data: keep local */
+    }
+  }
+
+  /** run `go` after an interstitial ad (at most one per two minutes, never mid-play) */
+  private withAd(go: () => void) {
+    if (Date.now() - this.lastAd < 120000) return go();
+    this.lastAd = Date.now();
+    showInterstitial(() => {
+      this.lastAd = Date.now();
+      go();
+    });
   }
 
   // ---------------------------------------------------------------- screens
@@ -172,15 +217,15 @@ class App {
     const node = this.setUi(`
       <div class="gz-screen gz-title">
         <div class="gz-logo">ГОЛ<span>А</span>ЗО!</div>
-        <div class="gz-sub">Нарисуй свой лучший гол</div>
-        <button class="gz-btn gz-big" data-go>${totalStars(this.progress) ? 'ПРОДОЛЖИТЬ' : 'ИГРАТЬ'}</button>
-        <button class="gz-btn gz-ghost" data-map>Уровни · ★ ${totalStars(this.progress)}/${LEVELS.length * 3}</button>
-        <button class="gz-btn gz-ghost" data-fk>Штрафные: на выживание${this.progress.fkBest ? ` · рекорд ${this.progress.fkBest}` : ''}</button>
-        <div class="gz-so-pick"><span>Серия пенальти</span>${SO_DIFF.map((d, i) => `<button class="gz-btn gz-ghost" data-so="${i}">${d.name}${this.progress.soWins?.[i] ? ` · 🏆${this.progress.soWins[i]}` : ''}</button>`).join('')}</div>
+        <div class="gz-sub">${tr('Нарисуй свой лучший гол')}</div>
+        <button class="gz-btn gz-big" data-go>${totalStars(this.progress) ? tr('ПРОДОЛЖИТЬ') : tr('ИГРАТЬ')}</button>
+        <button class="gz-btn gz-ghost" data-map>${tr('Уровни')} · ★ ${totalStars(this.progress)}/${LEVELS.length * 3}</button>
+        <button class="gz-btn gz-ghost" data-fk>${tr('Штрафные: на выживание')}${this.progress.fkBest ? ` · ${tr('рекорд')} ${this.progress.fkBest}` : ''}</button>
+        <div class="gz-so-pick"><span>${tr('Серия пенальти')}</span>${SO_DIFF.map((d, i) => `<button class="gz-btn gz-ghost" data-so="${i}">${tr(d.name)}${this.progress.soWins?.[i] ? ` · 🏆${this.progress.soWins[i]}` : ''}</button>`).join('')}</div>
         <div class="gz-how">
-          <div><b>1</b>Проведи линию от мяча</div>
-          <div><b>2</b>К партнёру — пас, в ворота — удар</div>
-          <div><b>3</b>Изогни линию — мяч закрутится</div>
+          <div><b>1</b>${tr('Проведи линию от мяча')}</div>
+          <div><b>2</b>${tr('К партнёру — пас, в ворота — удар')}</div>
+          <div><b>3</b>${tr('Изогни линию — мяч закрутится')}</div>
         </div>
       </div>`);
     $('[data-go]', node).onclick = () => {
@@ -250,7 +295,7 @@ class App {
 
   private fkHud() {
     const fk = this.fk!;
-    return `<div class="gz-fk"><span class="lives">${'❤'.repeat(fk.lives)}<i>${'❤'.repeat(3 - fk.lives)}</i></span><b>${fk.score}</b><small>голов: ${fk.goals}</small></div>`;
+    return `<div class="gz-fk"><span class="lives">${'❤'.repeat(fk.lives)}<i>${'❤'.repeat(3 - fk.lives)}</i></span><b>${fk.score}</b><small>${tr('голов')}: ${fk.goals}</small></div>`;
   }
 
   private showFreeKickEnd() {
@@ -266,14 +311,14 @@ class App {
     const node = this.setUi(`
       <div class="gz-screen gz-result ${record ? 'win' : 'lose'}">
         <div class="gz-card">
-          <h1>${record ? 'НОВЫЙ РЕКОРД!' : 'КОНЕЦ СЕРИИ'}</h1>
-          <div class="gz-points">${fk.score} <small>очков</small></div>
-          <p class="why">Голов: ${fk.goals}. ${record ? '' : `Рекорд: ${best}.`} Бей в мишени — за них +500.</p>
-          <div class="gz-row"><button class="gz-btn gz-big" data-again>↻ ЕЩЁ РАЗ</button></div>
-          <button class="gz-link" data-menu>В меню</button>
+          <h1>${record ? tr('НОВЫЙ РЕКОРД!') : tr('КОНЕЦ СЕРИИ')}</h1>
+          <div class="gz-points">${fk.score} <small>${tr('очков')}</small></div>
+          <p class="why">${tr('Голов')}: ${fk.goals}. ${record ? '' : `${tr('Рекорд')}: ${best}.`} ${tr('Бей в мишени — за них +500.')}</p>
+          <div class="gz-row"><button class="gz-btn gz-big" data-again>${tr('↻ ЕЩЁ РАЗ')}</button></div>
+          <button class="gz-link" data-menu>${tr('В меню')}</button>
         </div>
       </div>`);
-    $('[data-again]', node).onclick = () => this.startFreeKicks();
+    $('[data-again]', node).onclick = () => this.withAd(() => this.startFreeKicks());
     $('[data-menu]', node).onclick = () => {
       this.fk = null;
       this.showTitle();
@@ -384,17 +429,17 @@ class App {
     const node = this.setUi(`
       <div class="gz-screen gz-result ${w === 'us' ? 'win' : 'lose'}">
         <div class="gz-card">
-          <h1>${w === 'us' ? 'ПОБЕДА!' : 'ПОРАЖЕНИЕ'}</h1>
+          <h1>${w === 'us' ? tr('ПОБЕДА!') : tr('ПОРАЖЕНИЕ')}</h1>
           <div class="gz-points">${a} : ${b}</div>
           ${this.soDots()}
-          <p class="why">${w === 'us' ? `Кубок твой! Сложность: ${SO_DIFF[so.diff].name.toLowerCase()}.` : 'В следующий раз прыгай раньше — и бей в самые углы.'}</p>
+          <p class="why">${w === 'us' ? `${tr('Кубок твой! Сложность:')} ${tr(SO_DIFF[so.diff].name).toLowerCase()}.` : tr('В следующий раз прыгай раньше — и бей в самые углы.')}</p>
           <div class="gz-row">
-            <button class="gz-btn gz-big" data-again>↻ ЕЩЁ СЕРИЮ</button>
+            <button class="gz-btn gz-big" data-again>${tr('↻ ЕЩЁ СЕРИЮ')}</button>
           </div>
-          <button class="gz-link" data-menu>В меню</button>
+          <button class="gz-link" data-menu>${tr('В меню')}</button>
         </div>
       </div>`);
-    $('[data-again]', node).onclick = () => this.startShootout(so.diff);
+    $('[data-again]', node).onclick = () => this.withAd(() => this.startShootout(so.diff));
     $('[data-menu]', node).onclick = () => {
       this.so = null;
       this.showTitle();
@@ -406,16 +451,16 @@ class App {
     this.so = null;
     this.fk = null;
     const p = this.progress;
-    let html = `<div class="gz-screen gz-map"><div class="gz-maphead"><button class="gz-icon" data-back>‹</button><h1>Карьера</h1><div class="gz-total">★ ${totalStars(p)}/${LEVELS.length * 3}</div></div><div class="gz-chapters">`;
+    let html = `<div class="gz-screen gz-map"><div class="gz-maphead"><button class="gz-icon" data-back>‹</button><h1>${tr('Карьера')}</h1><div class="gz-total">★ ${totalStars(p)}/${LEVELS.length * 3}</div></div><div class="gz-chapters">`;
     CHAPTERS.forEach((name, ci) => {
       const ls = LEVELS.filter((l) => l.chapter === ci);
       if (!ls.length) return;
-      html += `<div class="gz-chapter"><h2>${name}</h2><div class="gz-grid">`;
+      html += `<div class="gz-chapter"><h2>${tr(name)}</h2><div class="gz-grid">`;
       for (const l of ls) {
         const st = p.stars[l.id] ?? 0;
         const open = unlocked(p, l.id);
         html += `<button class="gz-tile ${open ? '' : 'locked'} ${st ? 'done' : ''}" data-level="${l.id}" ${open ? '' : 'disabled'}>
-          <span class="n">${open ? l.id : '🔒'}</span><span class="t">${l.title}</span>
+          <span class="n">${open ? l.id : '🔒'}</span><span class="t">${tr(l.title)}</span>
           <span class="s">${[1, 2, 3].map((i) => `<i class="${i <= st ? 'on' : ''}">★</i>`).join('')}</span></button>`;
       }
       html += `</div></div>`;
@@ -437,18 +482,18 @@ class App {
     this.loadLevel(L, true);
     this.screen = 'intro';
     const sc = L.score ?? [0, 0];
-    const kindLabel = { open: 'Атака', freekick: 'Штрафной', penalty: 'Пенальти', corner: 'Угловой' }[L.kind];
+    const kindLabel = { open: tr('Атака'), freekick: tr('Штрафной'), penalty: tr('Пенальти'), corner: tr('Угловой') }[L.kind];
     const best = this.progress.best[L.id];
     const node = this.setUi(`
       <div class="gz-screen gz-intro">
         <div class="gz-card">
           <div class="gz-ctx"><span class="min">${L.minute ?? 90}'</span><span class="sc"><i style="--c:${this.home.primary};color:${ink(this.home.primary)}">${this.home.short}</i>${sc[0]} : ${sc[1]}<i style="--c:${this.away.primary};color:${ink(this.away.primary)}">${this.away.short}</i></span><span class="kind">${kindLabel}</span></div>
-          <div class="gz-lvl">Уровень ${L.id}</div>
-          <h1>${L.title}</h1>
-          <p>${L.brief}</p>
-          ${L.tip ? `<p class="tip">💡 ${L.tip}</p>` : ''}
-          <div class="gz-goals"><span>★ гол</span><span>★★ ${L.stars[0]}</span><span>★★★ ${L.stars[1]}</span>${best ? `<span class="best">рекорд ${best}</span>` : ''}</div>
-          <button class="gz-btn gz-big" data-go>ВПЕРЁД!</button>
+          <div class="gz-lvl">${tr('Уровень')} ${L.id}</div>
+          <h1>${tr(L.title)}</h1>
+          <p>${tr(L.brief)}</p>
+          ${L.tip ? `<p class="tip">💡 ${tr(L.tip)}</p>` : ''}
+          <div class="gz-goals"><span>★ ${tr('гол')}</span><span>★★ ${L.stars[0]}</span><span>★★★ ${L.stars[1]}</span>${best ? `<span class="best">${tr('рекорд')} ${best}</span>` : ''}</div>
+          <button class="gz-btn gz-big" data-go>${tr('ВПЕРЁД!')}</button>
         </div>
       </div>`);
     $('[data-go]', node).onclick = () => this.beginPlay();
@@ -478,21 +523,21 @@ class App {
     this.hud = this.setUi(`
       <div class="gz-hud">
         <div class="gz-top">
-          ${this.so ? this.soDots() : this.fk ? this.fkHud() : `<div class="gz-badge"><b>${this.level.id}</b>${this.level.title}</div>`}
+          ${this.so ? this.soDots() : this.fk ? this.fkHud() : `<div class="gz-badge"><b>${this.level.id}</b>${tr(this.level.title)}</div>`}
           <div class="gz-tools">
-            <button class="gz-icon" data-restart title="Заново (R)">↻</button>
-            <button class="gz-icon" data-mute title="Звук (M)">${this.sound.muted ? '🔇' : '🔊'}</button>
-            <button class="gz-icon" data-menu title="Меню (Esc)">☰</button>
+            <button class="gz-icon" data-restart title="${tr('Заново (R)')}">↻</button>
+            <button class="gz-icon" data-mute title="${tr('Звук (M)')}">${this.sound.muted ? '🔇' : '🔊'}</button>
+            <button class="gz-icon" data-menu title="${tr('Меню (Esc)')}">☰</button>
           </div>
         </div>
         <div class="gz-hint" data-hint></div>
         <div class="gz-cam">
           <button class="gz-icon" data-rotl>⟲</button>
-          <button class="gz-icon" data-top title="Вид сверху (C)">◎</button>
+          <button class="gz-icon" data-top title="${tr('Вид сверху (C)')}">◎</button>
           <button class="gz-icon" data-rotr>⟳</button>
         </div>
-        <button class="gz-lob" data-lob title="Навес (Пробел)">⤴ НАВЕС</button>
-        <button class="gz-hintbtn" data-hintbtn hidden>💡 Подсказка</button>
+        <button class="gz-lob" data-lob title="${tr('Навес (Пробел)')}">${tr('⤴ НАВЕС')}</button>
+        <button class="gz-hintbtn" data-hintbtn hidden>${tr('💡 Подсказка')}</button>
         <div class="gz-finger" data-finger hidden><i></i></div>
         <div class="gz-banner" data-banner></div>
         <div class="gz-toast" data-toast></div>
@@ -523,10 +568,13 @@ class App {
     const hb = $('[data-hintbtn]', this.hud);
     hb.hidden = !(this.level.hint && this.fails >= 2 && !this.so && !this.fk);
     hb.onclick = () => {
-      this.showHint();
       hb.hidden = true;
+      showRewarded((ok) => {
+        if (ok) this.showHint();
+        else hb.hidden = false;
+      });
     };
-    if (this.so) this.banner(this.so.turn === 'us' ? 'ТВОЙ УДАР' : 'ТЫ В ВОРОТАХ', '', this.so.turn === 'us' ? '#ffd23f' : '#6fe3ff');
+    if (this.so) this.banner(this.so.turn === 'us' ? tr('ТВОЙ УДАР') : tr('ТЫ В ВОРОТАХ'), '', this.so.turn === 'us' ? '#ffd23f' : '#6fe3ff');
   }
 
   /** ghost line of a first move that works (found offline by the solver bot) */
@@ -539,7 +587,7 @@ class App {
         ? { type: 'shot', target: new THREE.Vector3(GOAL_X, h[2], h[1]), curl: h[3] }
         : { type: h[0], target: new THREE.Vector3(GOAL_X - h[1], 0, h[2]), curl: 0 };
     this.r.setPreview(m.preview(a), a.type, a.type === 'shot' ? null : m.pickReceiver(a.target, a.type === 'lob'));
-    this.toast('Вот так — попробуй!');
+    this.toast(tr('Вот так — попробуй!'));
   }
 
   private setLob(v: boolean) {
@@ -568,12 +616,12 @@ class App {
     const m = this.m;
     if (!h || !m) return;
     let t = '';
-    if (this.so?.turn === 'them') t = m.phase === 'aim' ? (this.so.keeper?.guess ? '<b>Прыжок выбран!</b>' : 'Проведи линию <b>туда, куда прыгнуть</b> — пока он разбегается!') : '';
+    if (this.so?.turn === 'them') t = m.phase === 'aim' ? (this.so.keeper?.guess ? tr('<b>Прыжок выбран!</b>') : tr('Проведи линию <b>туда, куда прыгнуть</b> — пока он разбегается!')) : '';
     else if (m.phase === 'aim') {
-      if (m.touch === 'header') t = 'Мяч летит на голову — <b>рисуй удар головой!</b>';
-      else if (m.touch === 'volley') t = 'Мяч в воздухе — <b>бей с лёта!</b>';
-      else if (m.kicks === 0) t = this.level.kind === 'open' || this.level.kind === 'corner' ? 'Проведи линию от мяча: <b>к партнёру — пас</b>, <b>в ворота — удар</b>' : 'Проведи линию от мяча <b>в ворота</b>. Изогни — закрутишь';
-      else t = '<b>Твой ход!</b> Пас или удар';
+      if (m.touch === 'header') t = tr('Мяч летит на голову — <b>рисуй удар головой!</b>');
+      else if (m.touch === 'volley') t = tr('Мяч в воздухе — <b>бей с лёта!</b>');
+      else if (m.kicks === 0) t = this.level.kind === 'open' || this.level.kind === 'corner' ? tr('Проведи линию от мяча: <b>к партнёру — пас</b>, <b>в ворота — удар</b>') : tr('Проведи линию от мяча <b>в ворота</b>. Изогни — закрутишь');
+      else t = tr('<b>Твой ход!</b> Пас или удар');
     }
     h.innerHTML = t;
     h.style.opacity = t ? '1' : '0';
@@ -615,26 +663,26 @@ class App {
       saveProgress(this.progress);
     }
     const next = LEVELS.find((l) => l.id === L.id + 1);
-    const rows = res.bonuses.map((b, i) => `<div class="row" style="animation-delay:${0.25 + i * 0.18}s"><span>${b.label}</span><b>+${b.pts}</b></div>`).join('');
+    const rows = res.bonuses.map((b, i) => `<div class="row" style="animation-delay:${0.25 + i * 0.18}s"><span>${tr(b.label)}</span><b>+${b.pts}</b></div>`).join('');
     const node = this.setUi(`
       <div class="gz-screen gz-result ${res.ok ? 'win' : 'lose'}">
         <div class="gz-card">
-          <h1>${res.ok ? (res.stars === 3 ? 'ГОЛАЗО!' : 'ГОЛ!') : res.reason}</h1>
+          <h1>${res.ok ? (res.stars === 3 ? tr('ГОЛАЗО!') : tr('ГОЛ!')) : tr(res.reason)}</h1>
           ${res.ok ? `<div class="gz-stars">${[1, 2, 3].map((i) => `<i class="${i <= res.stars ? 'on' : ''}" style="animation-delay:${0.3 + i * 0.25}s">★</i>`).join('')}</div>
           <div class="gz-bonus">${rows}</div>
-          <div class="gz-points">${res.points} <small>очков</small></div>
+          <div class="gz-points">${res.points} <small>${tr('очков')}</small></div>
           ${res.stars < 3 ? `<div class="gz-need">★★★ — от ${L.stars[1]}</div>` : ''}` : `<p class="why">${failTip(res.reason)}</p>`}
           <div class="gz-row">
-            <button class="gz-btn ${res.ok ? 'gz-ghost' : 'gz-big'}" data-retry>↻ ЕЩЁ РАЗ</button>
-            ${res.ok && next ? `<button class="gz-btn gz-big" data-next>ДАЛЬШЕ ›</button>` : ''}
+            <button class="gz-btn ${res.ok ? 'gz-ghost' : 'gz-big'}" data-retry>${tr('↻ ЕЩЁ РАЗ')}</button>
+            ${res.ok && next ? `<button class="gz-btn gz-big" data-next>${tr('ДАЛЬШЕ ›')}</button>` : ''}
           </div>
-          <button class="gz-link" data-map>Все уровни</button>
+          <button class="gz-link" data-map>${tr('Все уровни')}</button>
         </div>
       </div>`);
     $('[data-retry]', node).onclick = () => this.restart();
     $('[data-map]', node).onclick = () => this.showMap();
     const nb = node.querySelector('[data-next]') as HTMLElement | null;
-    if (nb && next) nb.onclick = () => this.startLevel(next);
+    if (nb && next) nb.onclick = () => this.withAd(() => this.startLevel(next));
     if (res.ok) this.sound.chime(res.stars + 1);
   }
 
@@ -847,6 +895,8 @@ class App {
     dt *= speed;
     const m = this.m;
     if (!m) return;
+    gameplay(this.screen === 'play' && !isPaused());
+    if (isPaused()) return;
 
     if (this.previewDirty && this.drawing && this.so?.turn === 'them') {
       this.previewDirty = false;
@@ -990,7 +1040,7 @@ class App {
     this.replay = { i: 0, t: t0, side };
     this.r.net.reset();
     this.r.ball.resetTrail();
-    this.toast('ПОВТОР');
+    this.toast(tr('ПОВТОР'));
     this.hud?.classList.add('replaying');
   }
 
@@ -1040,12 +1090,12 @@ class App {
           break;
         case 'receive':
           this.sound.kick(4);
-          this.toast(pick(['Есть пас!', 'Принял!', 'Отлично!', 'Точно в ноги!']));
+          this.toast(tr(pick(['Есть пас!', 'Принял!', 'Отлично!', 'Точно в ноги!'])));
           this.r.showRuns(m);
           this.updateHint();
           break;
         case 'freeze':
-          this.toast(e.text === 'header' ? 'Головой!' : 'С лёта!');
+          this.toast(tr(e.text === 'header' ? 'Головой!' : 'С лёта!'));
           this.r.showRuns(m);
           this.updateHint();
           break;
@@ -1054,7 +1104,7 @@ class App {
           const res = m.result!;
           if (this.so?.turn === 'them') {
             this.sound.crowdReact('ooh');
-            this.banner('ГОЛ', 'пропустил', '#ff6b6b');
+            this.banner(tr('ГОЛ'), tr('пропустил'), '#ff6b6b');
             break;
           }
           this.sound.crowdReact('goal');
@@ -1064,7 +1114,7 @@ class App {
           this.r.shake = 1;
           if (m.targetHit) this.r.burstTarget();
           const best = [...res.bonuses].sort((a, b) => b.pts - a.pts).find((b) => b.label !== 'Гол');
-          this.banner(res.stars === 3 ? 'ГОЛАЗО!' : 'ГОЛ!', best?.label ?? '', res.stars === 3 ? '#ff4fa3' : '#ffd23f');
+          this.banner(res.stars === 3 ? tr('ГОЛАЗО!') : tr('ГОЛ!'), tr(best?.label ?? ''), res.stars === 3 ? '#ff4fa3' : '#ffd23f');
           break;
         }
         case 'save':
@@ -1074,20 +1124,20 @@ class App {
           if (this.so?.turn === 'them') {
             this.sound.crowdReact('goal');
             this.r.shake = 0.8;
-            this.banner('ТАЩИШЬ!', e.type === 'save' ? 'сейв' : 'поймал', '#6fe3ff');
-          } else this.banner(e.type === 'save' ? 'СЕЙВ!' : 'ПОЙМАЛ!', '', '#7fe0ff');
+            this.banner(tr('ТАЩИШЬ!'), tr(e.type === 'save' ? 'сейв' : 'поймал'), '#6fe3ff');
+          } else this.banner(tr(e.type === 'save' ? 'СЕЙВ!' : 'ПОЙМАЛ!'), '', '#7fe0ff');
           break;
         case 'intercept':
         case 'block':
           this.sound.bonk(6);
           this.sound.crowdReact('ooh');
-          this.banner(e.type === 'block' ? 'В СТЕНКУ!' : 'ПЕРЕХВАТ!', '', '#ff6b6b');
+          this.banner(tr(e.type === 'block' ? 'В СТЕНКУ!' : 'ПЕРЕХВАТ!'), '', '#ff6b6b');
           break;
         case 'miss':
         case 'lost':
           this.sound.crowdReact('ooh');
-          if (this.so?.turn === 'them') this.banner('МИМО!', 'повезло', '#6fe3ff');
-          else this.banner(m.result?.reason.toUpperCase() ?? 'МИМО!', '', '#ff6b6b');
+          if (this.so?.turn === 'them') this.banner(tr('МИМО!'), tr('повезло'), '#6fe3ff');
+          else this.banner(tr(m.result?.reason ?? 'Мимо!').toUpperCase(), '', '#ff6b6b');
           break;
         case 'dive':
           this.sound.whoosh();
@@ -1222,13 +1272,18 @@ function pick<T>(a: T[]): T {
 }
 
 function failTip(reason: string) {
-  if (reason.includes('Перехват')) return 'Защитник успел к мячу. Отдай пас подальше от него — или навесом поверх.';
-  if (reason.includes('стенку')) return 'Стенка прыгает. Закрути мяч в обход неё — изогни линию сильнее.';
-  if (reason.includes('Сейв') || reason.includes('поймал')) return 'Вратарь прочитал удар. Бей в угол, а кручёный мяч он видит хуже.';
-  if (reason.includes('Мимо') || reason.includes('штанги')) return 'Чуть-чуть! Смотри на точку, где линия пересекает ворота.';
-  if (reason.includes('потерян') || reason.includes('линию') || reason.includes('Аут')) return 'Мяч никто не подобрал. Пас — к партнёру или в конец его стрелки.';
-  return 'Попробуй ещё раз!';
+  if (reason.includes('Перехват')) return tr('Защитник успел к мячу. Отдай пас подальше от него — или навесом поверх.');
+  if (reason.includes('стенку')) return tr('Стенка прыгает. Закрути мяч в обход неё — изогни линию сильнее.');
+  if (reason.includes('Сейв') || reason.includes('поймал')) return tr('Вратарь прочитал удар. Бей в угол, а кручёный мяч он видит хуже.');
+  if (reason.includes('Мимо') || reason.includes('штанги')) return tr('Чуть-чуть! Смотри на точку, где линия пересекает ворота.');
+  if (reason.includes('потерян') || reason.includes('линию') || reason.includes('Аут')) return tr('Мяч никто не подобрал. Пас — к партнёру или в конец его стрелки.');
+  return tr('Попробуй ещё раз!');
 }
 
-const app = new App();
-(window as unknown as { __gz: App }).__gz = app;
+(async () => {
+  await initPlatform();
+  const app = new App();
+  (window as unknown as { __gz: App }).__gz = app;
+  gameReady();
+  app.syncCloud();
+})();

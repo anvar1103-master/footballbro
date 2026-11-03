@@ -13,6 +13,7 @@ import { GoalNet } from '../render/net';
 import { Stadium } from '../render/stadium';
 import { DudeActor } from '../party/dude';
 import { BRO, type Bro } from '../party/bro';
+import { tr } from './i18n';
 import { Actor, FIELD, GOAL_X, GH, HW, Moment } from './sim';
 
 export type Quality = 'low' | 'medium' | 'high';
@@ -302,7 +303,7 @@ export class GolazoRenderer {
     }
     this.dudes.clear();
     for (const a of m.actors) {
-      const puppet = new PuppetBro(a.id, a.role === 'gk' ? 'GK' : 'FIELD', a.number, a.name);
+      const puppet = new PuppetBro(a.id, a.role === 'gk' ? 'GK' : 'FIELD', a.number, tr(a.name));
       const dude = new DudeActor(puppet as unknown as Bro, a.team === 0 ? home : away, a.team === 0 ? away : home);
       this.dudes.set(a.id, { dude, puppet });
       this.scene.add(dude.root, dude.stars);

@@ -52,12 +52,22 @@ main.ts    — App: screens title / map / intro / play / result, shoot-out (Shoo
              (pointer events; line starts at the ball; end → ray vs goal plane / grass; bend of the stroke vs its chord → curl),
              camera director (aim behind the ball, tactical intro, flight chase, slow-mo near goal, side replay),
              sounds (src/audio/sound.ts), banners/toasts. Debug: ?level=N, ?all (unlock), &q=low|medium|high, &speed=x.
-golazo.css — UI (Russo One + Nunito, navy/pink/gold).
+golazo.css — UI (Russo One + Nunito, navy/pink/gold). fonts.css = LOCAL @font-face (@fontsource woff2, no Google Fonts).
+i18n.ts    — ru/en: Russian source strings are the keys, tr(s) → English when lang==='en' (sim/levels stay Russian; main.ts wraps
+             every displayed string). New UI text = add the Russian string to EN in i18n.ts or it stays Russian in English mode.
+platform.ts — Yandex Games SDK wrapper (works without the SDK too): initPlatform (lang from environment.i18n.lang, ?lang=xx
+             override), gameReady (LoadingAPI.ready), gameplay(on) (GameplayAPI start/stop — called every frame from
+             screen==='play'), onPause/isPaused (tab hidden, ad open, game_api_pause), loadCloud/saveCloud (player data,
+             merged with localStorage by mergeProgress), showInterstitial (App.withAd: ≤1 per 2 min, only on next level /
+             play again), showRewarded (the hint button; free outside Yandex).
 ```
 Balancing: `.scratch/solveall.ts` (bot.solve: pass grid search + shot grid, 3 seeds) — all 20 levels solved, finishes
 after a good set-up score 45–90 %, long shots ~10 %, penalties ~80 %.
 Tests: `tests/golazo.test.ts` (shoot-out keeper dive right/wrong/stand, shot through the drawn point, curl side, firm pass, intercept vs lob, keeper corner/centre,
 wall, cross → header/volley freeze, points, determinism, clone, level sanity, one-touch levels scorable).
+YANDEX GAMES: `./scripts/build-yandex.sh` → `.scratch/golazo-yandex.zip` (index.html in the root, relative paths, local
+fonts, no Kenney models, index.html loads `/sdk.js` which Yandex serves). Checked: no third-party requests, SDK calls
+(ready/start/save/ad/rewarded) fire with a fake YaGames (.scratch/ytest.ts). Upload in the Yandex Games console (HTML5, ru+en).
 Build the link: `VITE_ENTRY=index npx vite build --outDir .scratch/single-golazo --emptyOutDir && python3 -I scripts/build-single.py .scratch/single-golazo <scratchpad>/golazo/index.html Golazo`.
 
 ## Footballbro (previous game) reference
